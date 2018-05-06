@@ -1,6 +1,6 @@
 (function(global) {
 
-  "use strict";
+  'use strict';
 
   var fabric = global.fabric || (global.fabric = { });
 
@@ -14,6 +14,7 @@
    * @class fabric.Triangle
    * @extends fabric.Object
    * @return {fabric.Triangle} thisArg
+   * @see {@link fabric.Triangle#initialize} for constructor definition
    */
   fabric.Triangle = fabric.util.createClass(fabric.Object, /** @lends fabric.Triangle.prototype */ {
 
@@ -25,22 +26,22 @@
     type: 'triangle',
 
     /**
-     * Constructor
-     * @param {Object} [options] Options object
-     * @return {Object} thisArg
+     * Width is set to 100 to compensate the old initialize code that was setting it to 100
+     * @type Number
+     * @default
      */
-    initialize: function(options) {
-      options = options || { };
+    width: 100,
 
-      this.callSuper('initialize', options);
-
-      this.set('width', options.width || 100)
-          .set('height', options.height || 100);
-    },
+    /**
+     * Height is set to 100 to compensate the old initialize code that was setting it to 100
+     * @type Number
+     * @default
+     */
+    height: 100,
 
     /**
      * @private
-     * @param ctx {CanvasRenderingContext2D} Context to render on
+     * @param {CanvasRenderingContext2D} ctx Context to render on
      */
     _render: function(ctx) {
       var widthBy2 = this.width / 2,
@@ -52,13 +53,12 @@
       ctx.lineTo(widthBy2, heightBy2);
       ctx.closePath();
 
-      this._renderFill(ctx);
-      this._renderStroke(ctx);
+      this._renderPaintInOrder(ctx);
     },
 
     /**
      * @private
-     * @param ctx {CanvasRenderingContext2D} Context to render on
+     * @param {CanvasRenderingContext2D} ctx Context to render on
      */
     _renderDashedStroke: function(ctx) {
       var widthBy2 = this.width / 2,
@@ -74,48 +74,43 @@
     /* _TO_SVG_START_ */
     /**
      * Returns SVG representation of an instance
+     * @param {Function} [reviver] Method for further parsing of svg representation.
      * @return {String} svg representation of an instance
      */
-    toSVG: function() {
+    toSVG: function(reviver) {
       var markup = this._createBaseSVGMarkup(),
           widthBy2 = this.width / 2,
-          heightBy2 = this.height / 2;
-
-      var points = [
-        -widthBy2 + " " + heightBy2,
-        "0 " + -heightBy2,
-        widthBy2 + " " + heightBy2
-      ].join(",");
+          heightBy2 = this.height / 2,
+          points = [
+            -widthBy2 + ' ' + heightBy2,
+            '0 ' + -heightBy2,
+            widthBy2 + ' ' + heightBy2
+          ]
+            .join(',');
 
       markup.push(
-        '<polygon ',
-          'points="', points,
-          '" style="', this.getSvgStyles(),
-          '" transform="', this.getSvgTransform(),
-        '"/>'
+        '<polygon ', this.getSvgId(),
+        'points="', points,
+        '" style="', this.getSvgStyles(),
+        '" transform="', this.getSvgTransform(), '"',
+        this.addPaintOrder(),
+        '/>'
       );
 
-      return markup.join('');
+      return reviver ? reviver(markup.join('')) : markup.join('');
     },
     /* _TO_SVG_END_ */
-
-    /**
-     * Returns complexity of an instance
-     * @return {Number} complexity of this instance
-     */
-    complexity: function() {
-      return 1;
-    }
   });
 
   /**
-   * Returns fabric.Triangle instance from an object representation
+   * Returns {@link fabric.Triangle} instance from an object representation
    * @static
-   * @param object {Object} object to create an instance from
-   * @return {Object} instance of Canvas.Triangle
+   * @memberOf fabric.Triangle
+   * @param {Object} object Object to create an instance from
+   * @param {function} [callback] invoked with new instance as first argument
    */
-  fabric.Triangle.fromObject = function(object) {
-    return new fabric.Triangle(object);
+  fabric.Triangle.fromObject = function(object, callback) {
+    return fabric.Object._fromObject('Triangle', object, callback);
   };
 
 })(typeof exports !== 'undefined' ? exports : this);

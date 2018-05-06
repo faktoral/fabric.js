@@ -12,21 +12,21 @@
     return typeof id === 'string' ? fabric.document.getElementById(id) : id;
   }
 
-  /**
-   * Converts an array-like object (e.g. arguments or NodeList) to an array
-   * @memberOf fabric.util
-   * @param {Object} arrayLike
-   * @return {Array}
-   */
-  var toArray = function(arrayLike) {
-    return _slice.call(arrayLike, 0);
-  };
+  var sliceCanConvertNodelists,
+      /**
+       * Converts an array-like object (e.g. arguments or NodeList) to an array
+       * @memberOf fabric.util
+       * @param {Object} arrayLike
+       * @return {Array}
+       */
+      toArray = function(arrayLike) {
+        return _slice.call(arrayLike, 0);
+      };
 
-  var sliceCanConvertNodelists;
   try {
     sliceCanConvertNodelists = toArray(fabric.document.childNodes) instanceof Array;
   }
-  catch(err) { }
+  catch (err) { }
 
   if (!sliceCanConvertNodelists) {
     toArray = function(arrayLike) {
@@ -68,7 +68,7 @@
    * @param {String} className Class to add to an element
    */
   function addClass(element, className) {
-    if ((' ' + element.className + ' ').indexOf(' ' + className + ' ') === -1) {
+    if (element && (' ' + element.className + ' ').indexOf(' ' + className + ' ') === -1) {
       element.className += (element.className ? ' ' : '') + className;
     }
   }
@@ -93,6 +93,47 @@
   }
 
   /**
+   * Returns element scroll offsets
+   * @memberOf fabric.util
+   * @param {HTMLElement} element Element to operate on
+   * @return {Object} Object with left/top values
+   */
+  function getScrollLeftTop(element) {
+
+    var left = 0,
+        top = 0,
+        docElement = fabric.document.documentElement,
+        body = fabric.document.body || {
+          scrollLeft: 0, scrollTop: 0
+        };
+
+    // While loop checks (and then sets element to) .parentNode OR .host
+    //  to account for ShadowDOM. We still want to traverse up out of ShadowDOM,
+    //  but the .parentNode of a root ShadowDOM node will always be null, instead
+    //  it should be accessed through .host. See http://stackoverflow.com/a/24765528/4383938
+    while (element && (element.parentNode || element.host)) {
+
+      // Set element to element parent, or 'host' in case of ShadowDOM
+      element = element.parentNode || element.host;
+
+      if (element === fabric.document) {
+        left = body.scrollLeft || docElement.scrollLeft || 0;
+        top = body.scrollTop ||  docElement.scrollTop || 0;
+      }
+      else {
+        left += element.scrollLeft || 0;
+        top += element.scrollTop || 0;
+      }
+
+      if (element.nodeType === 1 && element.style.position === 'fixed') {
+        break;
+      }
+    }
+
+    return { left: left, top: top };
+  }
+
+  /**
    * Returns offset for a given element
    * @function
    * @memberOf fabric.util
@@ -100,19 +141,20 @@
    * @return {Object} Object with "left" and "top" properties
    */
   function getElementOffset(element) {
-    var docElem, win,
-        box = {left: 0, top: 0},
+    var docElem,
         doc = element && element.ownerDocument,
-        offset = {left: 0, top: 0},
+        box = { left: 0, top: 0 },
+        offset = { left: 0, top: 0 },
+        scrollLeftTop,
         offsetAttributes = {
-           'borderLeftWidth': 'left',
-           'borderTopWidth':  'top',
-           'paddingLeft':     'left',
-           'paddingTop':      'top'
+          borderLeftWidth: 'left',
+          borderTopWidth:  'top',
+          paddingLeft:     'left',
+          paddingTop:      'top'
         };
 
-    if (!doc){
-      return {left: 0, top: 0};
+    if (!doc) {
+      return offset;
     }
 
     for (var attr in offsetAttributes) {
@@ -120,54 +162,53 @@
     }
 
     docElem = doc.documentElement;
-    if ( typeof element.getBoundingClientRect !== "undefined" ) {
+    if ( typeof element.getBoundingClientRect !== 'undefined' ) {
       box = element.getBoundingClientRect();
     }
-    if(doc != null && doc === doc.window){
-      win = doc;
-    } else {
-      win = doc.nodeType === 9 && (doc.defaultView || doc.parentWindow);
-    }
+
+    scrollLeftTop = getScrollLeftTop(element);
+
     return {
-      left: box.left + (win.pageXOffset || docElem.scrollLeft) - (docElem.clientLeft || 0) + offset.left,
-      top: box.top + (win.pageYOffset || docElem.scrollTop) - (docElem.clientTop || 0)  + offset.top
+      left: box.left + scrollLeftTop.left - (docElem.clientLeft || 0) + offset.left,
+      top: box.top + scrollLeftTop.top - (docElem.clientTop || 0)  + offset.top
     };
   }
 
   /**
-  * Returns style attribute value of a given element
-  * @memberOf fabric.util
-  * @param {HTMLElement} element Element to get style attribute for
-  * @param {String} attr Style attribute to get for element
-  * @return {String} Style attribute value of the given element.
-  */
-  function getElementStyle(element, attr) {
-    if (!element.style) {
-      element.style = { };
-    }
-
-    if (fabric.document.defaultView && fabric.document.defaultView.getComputedStyle) {
-      return fabric.document.defaultView.getComputedStyle(element, null)[attr];
-    }
-    else {
+   * Returns style attribute value of a given element
+   * @memberOf fabric.util
+   * @param {HTMLElement} element Element to get style attribute for
+   * @param {String} attr Style attribute to get for element
+   * @return {String} Style attribute value of the given element.
+   */
+  var getElementStyle;
+  if (fabric.document.defaultView && fabric.document.defaultView.getComputedStyle) {
+    getElementStyle = function(element, attr) {
+      var style = fabric.document.defaultView.getComputedStyle(element, null);
+      return style ? style[attr] : undefined;
+    };
+  }
+  else {
+    getElementStyle = function(element, attr) {
       var value = element.style[attr];
-      if (!value && element.currentStyle) value = element.currentStyle[attr];
+      if (!value && element.currentStyle) {
+        value = element.currentStyle[attr];
+      }
       return value;
-    }
+    };
   }
 
   (function () {
-    var style = fabric.document.documentElement.style;
-
-    var selectProp = 'userSelect' in style
-      ? 'userSelect'
-      : 'MozUserSelect' in style
-        ? 'MozUserSelect'
-        : 'WebkitUserSelect' in style
-          ? 'WebkitUserSelect'
-          : 'KhtmlUserSelect' in style
-            ? 'KhtmlUserSelect'
-            : '';
+    var style = fabric.document.documentElement.style,
+        selectProp = 'userSelect' in style
+          ? 'userSelect'
+          : 'MozUserSelect' in style
+            ? 'MozUserSelect'
+            : 'WebkitUserSelect' in style
+              ? 'WebkitUserSelect'
+              : 'KhtmlUserSelect' in style
+                ? 'KhtmlUserSelect'
+                : '';
 
     /**
      * Makes element unselectable
@@ -220,7 +261,7 @@
      * @param {Function} callback Callback to execute when script is finished loading
      */
     function getScript(url, callback) {
-      var headEl = fabric.document.getElementsByTagName("head")[0],
+      var headEl = fabric.document.getElementsByTagName('head')[0],
           scriptEl = fabric.document.createElement('script'),
           loading = true;
 
@@ -229,7 +270,9 @@
         if (loading) {
           if (typeof this.readyState === 'string' &&
               this.readyState !== 'loaded' &&
-              this.readyState !== 'complete') return;
+              this.readyState !== 'complete') {
+            return;
+          }
           loading = false;
           callback(e || fabric.window.event);
           scriptEl = scriptEl.onload = scriptEl.onreadystatechange = null;
@@ -244,12 +287,19 @@
     fabric.util.getScript = getScript;
   })();
 
+  function getNodeCanvas(element) {
+    var impl = fabric.jsdomImplForWrapper(element);
+    return impl._canvas || impl._image;
+  };
+
   fabric.util.getById = getById;
   fabric.util.toArray = toArray;
   fabric.util.makeElement = makeElement;
   fabric.util.addClass = addClass;
   fabric.util.wrapElement = wrapElement;
+  fabric.util.getScrollLeftTop = getScrollLeftTop;
   fabric.util.getElementOffset = getElementOffset;
   fabric.util.getElementStyle = getElementStyle;
+  fabric.util.getNodeCanvas = getNodeCanvas;
 
 })();

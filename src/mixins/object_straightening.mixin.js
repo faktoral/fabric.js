@@ -5,11 +5,11 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
    * @return {Number} angle value
    */
   _getAngleValueForStraighten: function() {
-    var angle = this.getAngle() % 360;
+    var angle = this.angle % 360;
     if (angle > 0) {
-      return Math.round((angle-1)/90) * 90;
+      return Math.round((angle - 1) / 90) * 90;
     }
-    return Math.round(angle/90) * 90;
+    return Math.round(angle / 90) * 90;
   },
 
   /**
@@ -18,16 +18,15 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
    * @chainable
    */
   straighten: function() {
-    this.setAngle(this._getAngleValueForStraighten());
+    this.rotate(this._getAngleValueForStraighten());
     return this;
   },
 
   /**
-   * Same as {@link fabric.Object.prototype.straghten} but with animation
-   * @param {Object} callbacks
-   *                  - onComplete: invoked on completion
-   *                  - onChange: invoked on every step of animation
-   *
+   * Same as {@link fabric.Object.prototype.straighten} but with animation
+   * @param {Object} callbacks Object with callback functions
+   * @param {Function} [callbacks.onComplete] Invoked on completion
+   * @param {Function} [callbacks.onChange] Invoked on every step of animation
    * @return {fabric.Object} thisArg
    * @chainable
    */
@@ -44,16 +43,13 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
       endValue: this._getAngleValueForStraighten(),
       duration: this.FX_DURATION,
       onChange: function(value) {
-        _this.setAngle(value);
+        _this.rotate(value);
         onChange();
       },
       onComplete: function() {
         _this.setCoords();
         onComplete();
       },
-      onStart: function() {
-        _this.set('active', false);
-      }
     });
 
     return this;
@@ -70,7 +66,7 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
    */
   straightenObject: function (object) {
     object.straighten();
-    this.renderAll();
+    this.requestRenderAll();
     return this;
   },
 
@@ -82,7 +78,7 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
    */
   fxStraightenObject: function (object) {
     object.fxStraighten({
-      onChange: this.renderAll.bind(this)
+      onChange: this.requestRenderAllBound
     });
     return this;
   }

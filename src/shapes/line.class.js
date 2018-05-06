@@ -1,10 +1,11 @@
 (function(global) {
 
-  "use strict";
+  'use strict';
 
   var fabric = global.fabric || (global.fabric = { }),
       extend = fabric.util.object.extend,
-      coordProps = { 'x1': 1, 'x2': 1, 'y1': 1, 'y2': 1 },
+      clone = fabric.util.object.clone,
+      coordProps = { x1: 1, x2: 1, y1: 1, y2: 1 },
       supportsLineDash = fabric.StaticCanvas.supports('setLineDash');
 
   if (fabric.Line) {
@@ -16,6 +17,7 @@
    * Line class
    * @class fabric.Line
    * @extends fabric.Object
+   * @see {@link fabric.Line#initialize} for constructor definition
    */
   fabric.Line = fabric.util.createClass(fabric.Object, /** @lends fabric.Line.prototype */ {
 
@@ -27,14 +29,42 @@
     type: 'line',
 
     /**
+     * x value or first line edge
+     * @type Number
+     * @default
+     */
+    x1: 0,
+
+    /**
+     * y value or first line edge
+     * @type Number
+     * @default
+     */
+    y1: 0,
+
+    /**
+     * x value or second line edge
+     * @type Number
+     * @default
+     */
+    x2: 0,
+
+    /**
+     * y value or second line edge
+     * @type Number
+     * @default
+     */
+    y2: 0,
+
+    cacheProperties: fabric.Object.prototype.cacheProperties.concat('x1', 'x2', 'y1', 'y2'),
+
+    /**
      * Constructor
      * @param {Array} [points] Array of points
      * @param {Object} [options] Options object
      * @return {fabric.Line} thisArg
      */
     initialize: function(points, options) {
-      options = options || { };
-
       if (!points) {
         points = [0, 0, 0, 0];
       }
@@ -56,25 +86,66 @@
     _setWidthHeight: function(options) {
       options || (options = { });
 
-      this.set('width', Math.abs(this.x2 - this.x1) || 1);
-      this.set('height', Math.abs(this.y2 - this.y1) || 1);
+      this.width = Math.abs(this.x2 - this.x1);
+      this.height = Math.abs(this.y2 - this.y1);
 
-      this.set('left', 'left' in options ? options.left : (Math.min(this.x1, this.x2) + this.width / 2));
-      this.set('top', 'top' in options ? options.top : (Math.min(this.y1, this.y2) + this.height / 2));
+      this.left = 'left' in options
+        ? options.left
+        : this._getLeftToOriginX();
+
+      this.top = 'top' in options
+        ? options.top
+        : this._getTopToOriginY();
     },
 
     /**
      * @private
      * @param {String} key
-     * @param {Any} value
+     * @param {*} value
      */
     _set: function(key, value) {
-      this[key] = value;
-      if (key in coordProps) {
+      this.callSuper('_set', key, value);
+      if (typeof coordProps[key] !== 'undefined') {
         this._setWidthHeight();
       }
       return this;
     },
+
+    /**
+     * @private
+     * @return {Number} leftToOriginX Distance from left edge of canvas to originX of Line.
+     */
+    _getLeftToOriginX: makeEdgeToOriginGetter(
+      { // property names
+        origin: 'originX',
+        axis1: 'x1',
+        axis2: 'x2',
+        dimension: 'width'
+      },
+      { // possible values of origin
+        nearest: 'left',
+        center: 'center',
+        farthest: 'right'
+      }
+    ),
+
+    /**
+     * @private
+     * @return {Number} topToOriginY Distance from top edge of canvas to originY of Line.
+     */
+    _getTopToOriginY: makeEdgeToOriginGetter(
+      { // property names
+        origin: 'originY',
+        axis1: 'y1',
+        axis2: 'y2',
+        dimension: 'height'
+      },
+      { // possible values of origin
+        nearest: 'top',
+        center: 'center',
+        farthest: 'bottom'
+      }
+    ),
 
     /**
      * @private
@@ -83,25 +154,12 @@
     _render: function(ctx) {
       ctx.beginPath();
 
-      var isInPathGroup = this.group && this.group.type !== 'group';
-      if (isInPathGroup && !this.transformMatrix) {
-        ctx.translate(-this.group.width/2 + this.left, -this.group.height / 2 + this.top);
-      }
-
       if (!this.strokeDashArray || this.strokeDashArray && supportsLineDash) {
-
         // move from center (of virtual box) to its left/top corner
         // we can't assume x1, y1 is top left and x2, y2 is bottom right
-        var xMult = this.x1 <= this.x2 ? -1 : 1;
-        var yMult = this.y1 <= this.y2 ? -1 : 1;
-
-        ctx.moveTo(
-          this.width === 1 ? 0 : (xMult * this.width / 2),
-          this.height === 1 ? 0 : (yMult * this.height / 2));
-
-        ctx.lineTo(
-          this.width === 1 ? 0 : (xMult * -1 * this.width / 2),
-          this.height === 1 ? 0 : (yMult * -1 * this.height / 2));
+        var p = this.calcLinePoints();
+        ctx.moveTo(p.x1, p.y1);
+        ctx.lineTo(p.x2, p.y2);
       }
 
       ctx.lineWidth = this.strokeWidth;
@@ -111,7 +169,7 @@
       // (by copying fillStyle to strokeStyle, since line is stroked, not filled)
       var origStrokeStyle = ctx.strokeStyle;
       ctx.strokeStyle = this.stroke || ctx.fillStyle;
-      this._renderStroke(ctx);
+      this.stroke && this._renderStroke(ctx);
       ctx.strokeStyle = origStrokeStyle;
     },
 
@@ -120,67 +178,104 @@
      * @param {CanvasRenderingContext2D} ctx Context to render on
      */
     _renderDashedStroke: function(ctx) {
-      var
-        xMult = this.x1 <= this.x2 ? -1 : 1,
-        yMult = this.y1 <= this.y2 ? -1 : 1,
-        x = this.width === 1 ? 0 : xMult * this.width / 2,
-        y = this.height === 1 ? 0 : yMult * this.height / 2;
+      var p = this.calcLinePoints();
 
       ctx.beginPath();
-      fabric.util.drawDashedLine(ctx, x, y, -x, -y, this.strokeDashArray);
+      fabric.util.drawDashedLine(ctx, p.x1, p.y1, p.x2, p.y2, this.strokeDashArray);
       ctx.closePath();
+    },
+
+    /**
+     * This function is an helper for svg import. it returns the center of the object in the svg
+     * untransformed coordinates
+     * @private
+     * @return {Object} center point from element coordinates
+     */
+    _findCenterFromElement: function() {
+      return {
+        x: (this.x1 + this.x2) / 2,
+        y: (this.y1 + this.y2) / 2,
+      };
     },
 
     /**
      * Returns object representation of an instance
      * @methd toObject
-     * @param {Array} propertiesToInclude
+     * @param {Array} [propertiesToInclude] Any properties that you might want to additionally include in the output
      * @return {Object} object representation of an instance
      */
     toObject: function(propertiesToInclude) {
-      return extend(this.callSuper('toObject', propertiesToInclude), {
-        x1: this.get('x1'),
-        y1: this.get('y1'),
-        x2: this.get('x2'),
-        y2: this.get('y2')
-      });
+      return extend(this.callSuper('toObject', propertiesToInclude), this.calcLinePoints());
+    },
+
+    /*
+     * Calculate object dimensions from its properties
+     * @private
+     */
+    _getNonTransformedDimensions: function() {
+      var dim = this.callSuper('_getNonTransformedDimensions');
+      if (this.strokeLineCap === 'butt') {
+        if (this.width === 0) {
+          dim.y -= this.strokeWidth;
+        }
+        if (this.height === 0) {
+          dim.x -= this.strokeWidth;
+        }
+      }
+      return dim;
+    },
+
+    /**
+     * Recalculates line points given width and height
+     * @private
+     */
+    calcLinePoints: function() {
+      var xMult = this.x1 <= this.x2 ? -1 : 1,
+          yMult = this.y1 <= this.y2 ? -1 : 1,
+          x1 = (xMult * this.width * 0.5),
+          y1 = (yMult * this.height * 0.5),
+          x2 = (xMult * this.width * -0.5),
+          y2 = (yMult * this.height * -0.5);
+
+      return {
+        x1: x1,
+        x2: x2,
+        y1: y1,
+        y2: y2
+      };
     },
 
     /* _TO_SVG_START_ */
     /**
      * Returns SVG representation of an instance
+     * @param {Function} [reviver] Method for further parsing of svg representation.
      * @return {String} svg representation of an instance
      */
-    toSVG: function() {
-      var markup = this._createBaseSVGMarkup();
-
+    toSVG: function(reviver) {
+      var markup = this._createBaseSVGMarkup(),
+          p = this.calcLinePoints();
       markup.push(
-        '<line ',
-          'x1="', this.get('x1'),
-          '" y1="', this.get('y1'),
-          '" x2="', this.get('x2'),
-          '" y2="', this.get('y2'),
-          '" style="', this.getSvgStyles(),
-        '"/>'
+        '<line ', this.getSvgId(),
+        'x1="', p.x1,
+        '" y1="', p.y1,
+        '" x2="', p.x2,
+        '" y2="', p.y2,
+        '" style="', this.getSvgStyles(),
+        '" transform="', this.getSvgTransform(),
+        this.getSvgTransformMatrix(),
+        '"/>\n'
       );
 
-      return markup.join('');
+      return reviver ? reviver(markup.join('')) : markup.join('');
     },
     /* _TO_SVG_END_ */
-
-    /**
-     * Returns complexity of an instance
-     * @return {Number} complexity
-     */
-    complexity: function() {
-      return 1;
-    }
   });
 
   /* _FROM_SVG_START_ */
   /**
    * List of attribute names to account for when parsing SVG element (used by {@link fabric.Line.fromElement})
    * @static
+   * @memberOf fabric.Line
    * @see http://www.w3.org/TR/SVG/shapes.html#LineElement
    */
   fabric.Line.ATTRIBUTE_NAMES = fabric.SHARED_ATTRIBUTES.concat('x1 y1 x2 y2'.split(' '));
@@ -188,31 +283,64 @@
   /**
    * Returns fabric.Line instance from an SVG element
    * @static
+   * @memberOf fabric.Line
    * @param {SVGElement} element Element to parse
    * @param {Object} [options] Options object
-   * @return {fabric.Line} instance of fabric.Line
+   * @param {Function} [callback] callback function invoked after parsing
    */
-  fabric.Line.fromElement = function(element, options) {
-    var parsedAttributes = fabric.parseAttributes(element, fabric.Line.ATTRIBUTE_NAMES);
-    var points = [
-      parsedAttributes.x1 || 0,
-      parsedAttributes.y1 || 0,
-      parsedAttributes.x2 || 0,
-      parsedAttributes.y2 || 0
-    ];
-    return new fabric.Line(points, extend(parsedAttributes, options));
+  fabric.Line.fromElement = function(element, callback, options) {
+    options = options || { };
+    var parsedAttributes = fabric.parseAttributes(element, fabric.Line.ATTRIBUTE_NAMES),
+        points = [
+          parsedAttributes.x1 || 0,
+          parsedAttributes.y1 || 0,
+          parsedAttributes.x2 || 0,
+          parsedAttributes.y2 || 0
+        ];
+    callback(new fabric.Line(points, extend(parsedAttributes, options)));
   };
   /* _FROM_SVG_END_ */
 
   /**
    * Returns fabric.Line instance from an object representation
    * @static
+   * @memberOf fabric.Line
    * @param {Object} object Object to create an instance from
-   * @return {fabric.Line} instance of fabric.Line
+   * @param {function} [callback] invoked with new instance as first argument
    */
-  fabric.Line.fromObject = function(object) {
-    var points = [object.x1, object.y1, object.x2, object.y2];
-    return new fabric.Line(points, object);
+  fabric.Line.fromObject = function(object, callback) {
+    function _callback(instance) {
+      delete instance.points;
+      callback && callback(instance);
+    };
+    var options = clone(object, true);
+    options.points = [object.x1, object.y1, object.x2, object.y2];
+    fabric.Object._fromObject('Line', options, _callback, 'points');
   };
+
+  /**
+   * Produces a function that calculates distance from canvas edge to Line origin.
+   */
+  function makeEdgeToOriginGetter(propertyNames, originValues) {
+    var origin = propertyNames.origin,
+        axis1 = propertyNames.axis1,
+        axis2 = propertyNames.axis2,
+        dimension = propertyNames.dimension,
+        nearest = originValues.nearest,
+        center = originValues.center,
+        farthest = originValues.farthest;
+
+    return function() {
+      switch (this.get(origin)) {
+        case nearest:
+          return Math.min(this.get(axis1), this.get(axis2));
+        case center:
+          return Math.min(this.get(axis1), this.get(axis2)) + (0.5 * this.get(dimension));
+        case farthest:
+          return Math.max(this.get(axis1), this.get(axis2));
+      }
+    };
+
+  }
 
 })(typeof exports !== 'undefined' ? exports : this);

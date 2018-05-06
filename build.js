@@ -2,7 +2,8 @@ var fs = require('fs'),
     exec = require('child_process').exec;
 
 var buildArgs = process.argv.slice(2),
-    buildArgsAsObject = { };
+    buildArgsAsObject = { },
+    rootPath = process.cwd();
 
 buildArgs.forEach(function(arg) {
   var key = arg.split('=')[0],
@@ -11,27 +12,49 @@ buildArgs.forEach(function(arg) {
   buildArgsAsObject[key] = value;
 });
 
-var modulesToInclude = buildArgsAsObject.modules ? buildArgsAsObject.modules.split(',') : [ ];
-var modulesToExclude = buildArgsAsObject.exclude ? buildArgsAsObject.exclude.split(',') : [ ];
+var modulesToInclude = buildArgsAsObject.modules ? buildArgsAsObject.modules.split(',') : [];
+var modulesToExclude = buildArgsAsObject.exclude ? buildArgsAsObject.exclude.split(',') : [];
 
+var distributionPath = buildArgsAsObject.dest || 'dist/';
 var minifier = buildArgsAsObject.minifier || 'uglifyjs';
 var mininfierCmd;
 
-if (minifier === 'yui') {
-  mininfierCmd = 'java -jar lib/yuicompressor-2.4.6.jar dist/all.js -o dist/all.min.js';
-}
-else if (minifier === 'closure') {
-  mininfierCmd = 'java -jar lib/google_closure_compiler.jar --js dist/all.js --js_output_file dist/all.min.js';
-}
-else if (minifier === 'uglifyjs') {
-  mininfierCmd = 'uglifyjs --output dist/all.min.js dist/all.js';
-}
-
 var noStrict = 'no-strict' in buildArgsAsObject;
 var noSVGExport = 'no-svg-export' in buildArgsAsObject;
-var noES5Compat = 'no-es5-compat' in buildArgsAsObject;
+var requirejs = 'requirejs' in buildArgsAsObject ? 'requirejs' : false;
+var sourceMap = 'sourcemap' in buildArgsAsObject;
+var buildFast = 'fast' in buildArgsAsObject;
+// set amdLib var to encourage later support of other AMD systems
+var amdLib = requirejs;
 
-var buildSh = 'build-sh' in buildArgsAsObject;
+// if we want requirejs AMD support, use uglify
+var amdUglifyFlags = '';
+if (amdLib === 'requirejs' && minifier !== 'uglifyjs') {
+  console.log('[notice]: require.js support requires uglifyjs as minifier; changed minifier to uglifyjs.');
+  minifier = 'uglifyjs';
+  amdUglifyFlags = " -r 'require,exports,window,fabric' -e window:window,undefined ";
+}
+
+// if we want sourceMap support, uglify or google closure compiler are supported
+var sourceMapFlags = '';
+if (sourceMap) {
+  if (minifier !== 'uglifyjs' && minifier !== 'closure') {
+    console.log('[notice]: sourceMap support requires uglifyjs or google closure compiler as minifier; changed minifier to uglifyjs.');
+    minifier = 'uglifyjs';
+  }
+  sourceMapFlags = minifier === 'uglifyjs' ? ' --source-map fabric.min.js.map' : ' --create_source_map fabric.min.js.map --source_map_format=V3';
+}
+
+if (minifier === 'yui') {
+  mininfierCmd = 'java -jar ' + rootPath + '/lib/yuicompressor-2.4.6.jar fabric.js -o fabric.min.js';
+}
+else if (minifier === 'closure') {
+  mininfierCmd = 'java -jar ' + rootPath + '/lib/google_closure_compiler.jar --js fabric.js --js_output_file fabric.min.js' + sourceMapFlags;
+}
+else if (minifier === 'uglifyjs') {
+  mininfierCmd = 'uglifyjs ' + amdUglifyFlags + ' --compress --mangle --output fabric.min.js fabric.js' + sourceMapFlags;
+}
+
 var buildMinified = 'build-minified' in buildArgsAsObject;
 
 var includeAllModules = (modulesToInclude.length === 1 && modulesToInclude[0] === 'ALL') || buildMinified;
@@ -44,7 +67,9 @@ var distFileContents =
     (modulesToExclude.length ? (' exclude=' + modulesToExclude.join(',')) : '') +
     (noStrict ? ' no-strict' : '') +
     (noSVGExport ? ' no-svg-export' : '') +
-    (noES5Compat ? ' no-es5-compat' : '') +
+    (requirejs ? ' requirejs' : '') +
+    (sourceMap ? ' sourcemap' : '') +
+    ' minifier=' + minifier +
   '` */';
 
 function appendFileContents(fileNames, callback) {
@@ -64,14 +89,14 @@ function appendFileContents(fileNames, callback) {
     fs.readFile(__dirname + '/' + fileName, function (err, data) {
       if (err) throw err;
       var strData = String(data);
+      if (fileName === 'src/HEADER.js' && amdLib === false) {
+        strData = strData.replace(/\/\* _AMD_START_ \*\/[\s\S]*?\/\* _AMD_END_ \*\//g, '');
+      }
       if (noStrict) {
         strData = strData.replace(/"use strict";?\n?/, '');
       }
       if (noSVGExport) {
         strData = strData.replace(/\/\* _TO_SVG_START_ \*\/[\s\S]*?\/\* _TO_SVG_END_ \*\//g, '');
-      }
-      if (noES5Compat) {
-        strData = strData.replace(/\/\* _ES5_COMPAT_START_ \*\/[\s\S]*?\/\* _ES5_COMPAT_END_ \*\//g, '');
       }
       if (noSVGImport) {
         strData = strData.replace(/\/\* _FROM_SVG_START_ \*\/[\s\S]*?\/\* _FROM_SVG_END_ \*\//g, '');
@@ -91,41 +116,35 @@ function ifSpecifiedInclude(moduleName, fileName) {
   return ((isInIncludedList || includeAllModules) && !isInExcludedList) ? fileName : '';
 }
 
-function ifSpecifiedDependencyInclude(included, excluded, fileName) {
-  return (
-    (
-      (modulesToInclude.indexOf(included) > -1 || includeAllModules) &&
-      (modulesToExclude.indexOf(excluded) == -1))
-    ? fileName
-    : ''
-  );
-}
-
 var filesToInclude = [
   'HEADER.js',
-
-  ifSpecifiedDependencyInclude('text', 'cufon', 'lib/cufon.js'),
-  ifSpecifiedDependencyInclude('serialization', 'json', 'lib/json2.js'),
+  ifSpecifiedInclude('global', 'src/globalFabric.js'),
   ifSpecifiedInclude('gestures', 'lib/event.js'),
 
-  'src/log.js',
   'src/mixins/observable.mixin.js',
   'src/mixins/collection.mixin.js',
-
+  'src/mixins/shared_methods.mixin.js',
   'src/util/misc.js',
+  ifSpecifiedInclude('accessors', 'src/util/named_accessors.mixin.js'),
+  'src/util/arc.js',
   'src/util/lang_array.js',
   'src/util/lang_object.js',
   'src/util/lang_string.js',
-  'src/util/lang_function.js',
   'src/util/lang_class.js',
-  'src/util/dom_event.js',
+  ifSpecifiedInclude('interaction', 'src/util/dom_event.js'),
   'src/util/dom_style.js',
   'src/util/dom_misc.js',
   'src/util/dom_request.js',
 
+  'src/log.js',
+
+  ifSpecifiedInclude('animation', 'src/util/animate.js'),
+  ifSpecifiedInclude('animation', 'src/util/animate_color.js'),
+  //'src/util/animate.js',
   ifSpecifiedInclude('easing', 'src/util/anim_ease.js'),
 
   ifSpecifiedInclude('parser', 'src/parser.js'),
+  ifSpecifiedInclude('parser', 'src/elements_parser.js'),
 
   'src/point.class.js',
   'src/intersection.class.js',
@@ -146,8 +165,8 @@ var filesToInclude = [
 
   ifSpecifiedInclude('interaction', 'src/canvas.class.js'),
   ifSpecifiedInclude('interaction', 'src/mixins/canvas_events.mixin.js'),
+  ifSpecifiedInclude('interaction', 'src/mixins/canvas_grouping.mixin.js'),
 
-  'src/mixins/canvas_animation.mixin.js',
   'src/mixins/canvas_dataurl_exporter.mixin.js',
 
   ifSpecifiedInclude('serialization', 'src/mixins/canvas_serialization.mixin.js'),
@@ -156,9 +175,13 @@ var filesToInclude = [
   'src/shapes/object.class.js',
   'src/mixins/object_origin.mixin.js',
   'src/mixins/object_geometry.mixin.js',
+  'src/mixins/object_stacking.mixin.js',
+  'src/mixins/object.svg_export.js',
   'src/mixins/stateful.mixin.js',
 
   ifSpecifiedInclude('interaction', 'src/mixins/object_interactivity.mixin.js'),
+
+  ifSpecifiedInclude('animation', 'src/mixins/animation.mixin.js'),
 
   'src/shapes/line.class.js',
   'src/shapes/circle.class.js',
@@ -168,83 +191,96 @@ var filesToInclude = [
   'src/shapes/polyline.class.js',
   'src/shapes/polygon.class.js',
   'src/shapes/path.class.js',
-  'src/shapes/path_group.class.js',
   'src/shapes/group.class.js',
+  ifSpecifiedInclude('interaction', 'src/shapes/active_selection.class.js'),
   'src/shapes/image.class.js',
 
   ifSpecifiedInclude('object_straightening', 'src/mixins/object_straightening.mixin.js'),
-
+  ifSpecifiedInclude('image_filters', 'src/filters/webgl_backend.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/2d_backend.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/base_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/colormatrix_filter.class.js'),
   ifSpecifiedInclude('image_filters', 'src/filters/brightness_filter.class.js'),
   ifSpecifiedInclude('image_filters', 'src/filters/convolute_filter.class.js'),
-  ifSpecifiedInclude('image_filters', 'src/filters/gradienttransparency_filter.class.js'),
   ifSpecifiedInclude('image_filters', 'src/filters/grayscale_filter.class.js'),
   ifSpecifiedInclude('image_filters', 'src/filters/invert_filter.class.js'),
   ifSpecifiedInclude('image_filters', 'src/filters/noise_filter.class.js'),
   ifSpecifiedInclude('image_filters', 'src/filters/pixelate_filter.class.js'),
-  ifSpecifiedInclude('image_filters', 'src/filters/removewhite_filter.class.js'),
-  ifSpecifiedInclude('image_filters', 'src/filters/sepia_filter.class.js'),
-  ifSpecifiedInclude('image_filters', 'src/filters/sepia2_filter.class.js'),
-  ifSpecifiedInclude('image_filters', 'src/filters/tint_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/removecolor_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/filter_generator.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/blendcolor_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/blendimage_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/resize_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/contrast_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/saturate_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/blur_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/gamma_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/composed_filter.class.js'),
+  ifSpecifiedInclude('image_filters', 'src/filters/hue_rotation.class.js'),
 
   ifSpecifiedInclude('text', 'src/shapes/text.class.js'),
-  ifSpecifiedInclude('cufon', 'src/shapes/text.cufon.js'),
+  ifSpecifiedInclude('text', 'src/mixins/text_style.mixin.js'),
 
-  ifSpecifiedInclude('node', 'src/node.js')
+  ifSpecifiedInclude('itext', 'src/shapes/itext.class.js'),
+  ifSpecifiedInclude('itext', 'src/mixins/itext_behavior.mixin.js'),
+  ifSpecifiedInclude('itext', 'src/mixins/itext_click_behavior.mixin.js'),
+  ifSpecifiedInclude('itext', 'src/mixins/itext_key_behavior.mixin.js'),
+  ifSpecifiedInclude('itext', 'src/mixins/itext.svg_export.js'),
+
+  ifSpecifiedInclude('textbox', 'src/shapes/textbox.class.js'),
+  ifSpecifiedInclude('textbox', 'src/mixins/textbox_behavior.mixin.js'),
+
 ];
 
 if (buildMinified) {
   for (var i = 0; i < filesToInclude.length; i++) {
     if (!filesToInclude[i]) continue;
     var fileNameWithoutSlashes = filesToInclude[i].replace(/\//g, '^');
-    exec('uglifyjs -nc ' + filesToInclude[i] + ' > tmp/' + fileNameWithoutSlashes);
+    exec('uglifyjs -nc ' + amdUglifyFlags + filesToInclude[i] + ' > tmp/' + fileNameWithoutSlashes);
   }
 }
-else if (buildSh) {
-
-  var filesStr = filesToInclude.join(' ');
-  var isBasicBuild = modulesToInclude.length === 0;
-
-  var minFilesStr = filesToInclude
-    .filter(function(f) { return f !== '' })
-    .map(function(fileName) {
-      return 'tmp/' + fileName.replace(/\//g, '^');
-    })
-    .join(' ');
-
-  var fileName = isBasicBuild ? 'fabric' : modulesToInclude.join(',');
-
-  var escapedHeader = distFileContents.replace(/`/g, '\\`');
-  var path = '../fabricjs.com/build/files/' + fileName + '.js';
-  fs.appendFile('build.sh',
-    'echo "' + escapedHeader + '" > ' + path + ' && cat ' +
-    filesStr + ' >> ' + path + '\n');
-
-  path = '../fabricjs.com/build/files/' + fileName + '.min.js';
-  fs.appendFile('build.sh',
-    'echo "' + escapedHeader + '" > ' + path + ' && cat ' +
-    minFilesStr + ' >> ' + path + '\n')
-}
 else {
+  // change the current working directory
+  process.chdir(distributionPath);
+
   appendFileContents(filesToInclude, function() {
-    fs.writeFile('dist/all.js', distFileContents, function (err) {
+    fs.writeFile('fabric.js', distFileContents, function (err) {
       if (err) {
         console.log(err);
         throw err;
       }
+      if (buildFast) {
+        process.exit(0);
+      }
 
-      console.log('Built distribution to dist/all.js');
+      // add js wrapping in AMD closure for requirejs if necessary
+      if (amdLib !== false) {
+        exec('uglifyjs fabric.js ' + amdUglifyFlags + ' -b --output fabric.js');
+      }
+
+      if (amdLib !== false) {
+        console.log('Built distribution to ' + distributionPath + 'fabric.js (' + amdLib + '-compatible)');
+      } else {
+        console.log('Built distribution to ' + distributionPath + 'fabric.js');
+      }
 
       exec(mininfierCmd, function (error, output) {
         if (error) {
           console.error('Minification failed using', minifier, 'with', mininfierCmd);
+          console.error('Minifier error output:\n' + error);
           process.exit(1);
         }
-        console.log('Minified using', minifier, 'to dist/all.min.js');
+        console.log('Minified using', minifier, 'to ' + distributionPath + 'fabric.min.js');
 
-        exec('gzip -c dist/all.min.js > dist/all.min.js.gz', function (error, output) {
-          console.log('Gzipped to dist/all.min.js.gz');
+        if (sourceMapFlags) {
+          console.log('Built sourceMap to ' + distributionPath + 'fabric.min.js.map');
+        }
+
+        exec('gzip -c fabric.min.js > fabric.min.js.gz', function (error, output) {
+          console.log('Gzipped to ' + distributionPath + 'fabric.min.js.gz');
         });
       });
+
     });
   });
 }

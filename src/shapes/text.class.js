@@ -1,59 +1,67 @@
 (function(global) {
 
-  "use strict";
+  'use strict';
 
   var fabric = global.fabric || (global.fabric = { }),
-      extend = fabric.util.object.extend,
-      clone = fabric.util.object.clone,
-      toFixed = fabric.util.toFixed,
-      supportsLineDash = fabric.StaticCanvas.supports('setLineDash');
+      clone = fabric.util.object.clone;
 
   if (fabric.Text) {
     fabric.warn('fabric.Text is already defined');
     return;
   }
 
-  var stateProperties = fabric.Object.prototype.stateProperties.concat();
-  stateProperties.push(
-    'fontFamily',
-    'fontWeight',
-    'fontSize',
-    'path',
-    'text',
-    'textDecoration',
-    'textShadow',
-    'textAlign',
-    'fontStyle',
-    'lineHeight',
-    'backgroundColor',
-    'textBackgroundColor',
-    'useNative'
-  );
-
   /**
    * Text class
    * @class fabric.Text
    * @extends fabric.Object
    * @return {fabric.Text} thisArg
+   * @tutorial {@link http://fabricjs.com/fabric-intro-part-2#text}
+   * @see {@link fabric.Text#initialize} for constructor definition
    */
   fabric.Text = fabric.util.createClass(fabric.Object, /** @lends fabric.Text.prototype */ {
 
     /**
      * Properties which when set cause object to change dimensions
-     * @type Object
+     * @type Array
      * @private
      */
-    _dimensionAffectingProps: {
-      fontSize: true,
-      fontWeight: true,
-      fontFamily: true,
-      textDecoration: true,
-      fontStyle: true,
-      lineHeight: true,
-      stroke: true,
-      strokeWidth: true,
-      text: true
-    },
+    _dimensionAffectingProps: [
+      'fontSize',
+      'fontWeight',
+      'fontFamily',
+      'fontStyle',
+      'lineHeight',
+      'text',
+      'charSpacing',
+      'textAlign',
+      'styles',
+    ],
+
+    /**
+     * @private
+     */
+    _reNewline: /\r?\n/,
+
+    /**
+     * Use this regular expression to filter for whitespaces that is not a new line.
+     * Mostly used when text is 'justify' aligned.
+     * @private
+     */
+    _reSpacesAndTabs: /[ \t\r]/g,
+
+    /**
+     * Use this regular expression to filter for whitespace that is not a new line.
+     * Mostly used when text is 'justify' aligned.
+     * @private
+     */
+    _reSpaceAndTab: /[ \t\r]/,
+
+    /**
+     * Use this regular expression to filter consecutive groups of non spaces.
+     * Mostly used when text is 'justify' aligned.
+     * @private
+     */
+    _reWords: /\S+/g,
 
     /**
      * Type of an object
@@ -71,7 +79,7 @@
 
     /**
      * Font weight (e.g. bold, normal, 400, 600, 800)
-     * @type Number
+     * @type {(Number|String)}
      * @default
      */
     fontWeight:           'normal',
@@ -84,21 +92,29 @@
     fontFamily:           'Times New Roman',
 
     /**
-     * Text decoration Possible values: "", "underline", "overline" or "line-through".
+     * Text decoration underline.
      * @type String
      * @default
      */
-    textDecoration:       '',
+    underline:       false,
 
     /**
-     * Text shadow
-     * @type String | null
+     * Text decoration overline.
+     * @type String
      * @default
      */
-    textShadow:           '',
+    overline:       false,
 
     /**
-     * Text alignment. Possible values: "left", "center", or "right".
+     * Text decoration linethrough.
+     * @type String
+     * @default
+     */
+    linethrough:       false,
+
+    /**
+     * Text alignment. Possible values: "left", "center", "right", "justify",
+     * "justify-left", "justify-center" or "justify-right".
      * @type String
      * @default
      */
@@ -109,21 +125,34 @@
      * @type String
      * @default
      */
-    fontStyle:            '',
+    fontStyle:            'normal',
 
     /**
      * Line height
      * @type Number
      * @default
      */
-    lineHeight:           1.3,
+    lineHeight:           1.16,
 
     /**
-     * Background color of an entire text box
-     * @type String
+     * Superscript schema object (minimum overlap)
+     * @type {Object}
      * @default
      */
-    backgroundColor:      '',
+    superscript: {
+      size:      0.60, // fontSize factor
+      baseline: -0.35  // baseline-shift factor (upwards)
+    },
+
+    /**
+     * Subscript schema object (minimum overlap)
+     * @type {Object}
+     * @default
+     */
+    subscript: {
+      size:      0.60, // fontSize factor
+      baseline:  0.11  // baseline-shift factor (downwards)
+    },
 
     /**
      * Background color of text lines
@@ -133,25 +162,153 @@
     textBackgroundColor:  '',
 
     /**
-     * URL of a font file, when using Cufon
-     * @type String | null
-     * @default
+     * List of properties to consider when checking if
+     * state of an object is changed ({@link fabric.Object#hasStateChanged})
+     * as well as for history (undo/redo) purposes
+     * @type Array
      */
-    path:                 null,
+    stateProperties: fabric.Object.prototype.stateProperties.concat('fontFamily',
+      'fontWeight',
+      'fontSize',
+      'text',
+      'underline',
+      'overline',
+      'linethrough',
+      'textAlign',
+      'fontStyle',
+      'lineHeight',
+      'textBackgroundColor',
+      'charSpacing',
+      'styles'),
 
     /**
-     * Indicates whether canvas native text methods should be used to render text (otherwise, Cufon is used)
-     * @type Boolean
+     * List of properties to consider when checking if cache needs refresh
+     * @type Array
+     */
+    cacheProperties: fabric.Object.prototype.cacheProperties.concat('fontFamily',
+      'fontWeight',
+      'fontSize',
+      'text',
+      'underline',
+      'overline',
+      'linethrough',
+      'textAlign',
+      'fontStyle',
+      'lineHeight',
+      'textBackgroundColor',
+      'charSpacing',
+      'styles'),
+
+    /**
+     * When defined, an object is rendered via stroke and this property specifies its color.
+     * <b>Backwards incompatibility note:</b> This property was named "strokeStyle" until v1.1.6
+     * @type String
      * @default
      */
-     useNative:           true,
+    stroke:               null,
 
-     /**
-      * List of properties to consider when checking if state of an object is changed ({@link fabric.Object#hasStateChanged})
-      * as well as for history (undo/redo) purposes
-      * @type Array
-      */
-     stateProperties:     stateProperties,
+    /**
+     * Shadow object representing shadow of this shape.
+     * <b>Backwards incompatibility note:</b> This property was named "textShadow" (String) until v1.2.11
+     * @type fabric.Shadow
+     * @default
+     */
+    shadow:               null,
+
+    /**
+     * @private
+     */
+    _fontSizeFraction: 0.222,
+
+    /**
+     * @private
+     */
+    offsets: {
+      underline: 0.10,
+      linethrough: -0.315,
+      overline: -0.88
+    },
+
+    /**
+     * Text Line proportion to font Size (in pixels)
+     * @type Number
+     * @default
+     */
+    _fontSizeMult:             1.13,
+
+    /**
+     * additional space between characters
+     * expressed in thousands of em unit
+     * @type Number
+     * @default
+     */
+    charSpacing:             0,
+
+    /**
+     * Object containing character styles - top-level properties -> line numbers,
+     * 2nd-level properties - charater numbers
+     * @type Object
+     * @default
+     */
+    styles: null,
+
+    /**
+     * Reference to a context to measure text char or couple of chars
+     * the cacheContext of the canvas will be used or a freshly created one if the object is not on canvas
+     * once created it will be referenced on fabric._measuringContext to avoide creating a canvas for every
+     * text object created.
+     * @type {CanvasRenderingContext2D}
+     * @default
+     */
+    _measuringContext: null,
+
+    /**
+     * Baseline shift, stlyes only, keep at 0 for the main text object
+     * @type {Number}
+     * @default
+     */
+    deltaY: 0,
+
+    /**
+     * Array of properties that define a style unit (of 'styles').
+     * @type {Array}
+     * @default
+     */
+    _styleProperties: [
+      'stroke',
+      'strokeWidth',
+      'fill',
+      'fontFamily',
+      'fontSize',
+      'fontWeight',
+      'fontStyle',
+      'underline',
+      'overline',
+      'linethrough',
+      'deltaY',
+      'textBackgroundColor',
+    ],
+
+    /**
+     * contains characters bounding boxes
+     */
+    __charBounds: [],
+
+    /**
+     * use this size when measuring text. To avoid IE11 rounding errors
+     * @type {Number}
+     * @default
+     * @readonly
+     * @private
+     */
+    CACHE_FONT_SIZE: 400,
+
+    /**
+     * contains the min text width to avoid getting 0
+     * @type {Number}
+     * @default
+     */
+    MIN_TEXT_WIDTH: 2,
 
     /**
      * Constructor
@@ -160,24 +317,103 @@
      * @return {fabric.Text} thisArg
      */
     initialize: function(text, options) {
-      options = options || { };
-
+      this.styles = options ? (options.styles || { }) : { };
       this.text = text;
       this.__skipDimension = true;
-      this.setOptions(options);
+      this.callSuper('initialize', options);
       this.__skipDimension = false;
-      this._initDimensions();
+      this.initDimensions();
       this.setCoords();
+      this.setupState({ propertySet: '_dimensionAffectingProps' });
     },
 
     /**
-     * Renders text object on offscreen canvas, so that it would get dimensions
-     * @private
+     * Return a contex for measurement of text string.
+     * if created it gets stored for reuse
+     * @param {String} text Text string
+     * @param {Object} [options] Options object
+     * @return {fabric.Text} thisArg
      */
-    _initDimensions: function() {
-      if (this.__skipDimension) return;
-      var canvasEl = fabric.util.createCanvasElement();
-      this._render(canvasEl.getContext('2d'));
+    getMeasuringContext: function() {
+      // if we did not return we have to measure something.
+      if (!fabric._measuringContext) {
+        fabric._measuringContext = this.canvas && this.canvas.contextCache ||
+          fabric.util.createCanvasElement().getContext('2d');
+      }
+      return fabric._measuringContext;
+    },
+
+    /**
+     * @private
+     * Divides text into lines of text and lines of graphemes.
+     */
+    _splitText: function() {
+      var newLines = this._splitTextIntoLines(this.text);
+      this.textLines = newLines.lines;
+      this._textLines = newLines.graphemeLines;
+      this._unwrappedTextLines = newLines._unwrappedLines;
+      this._text = newLines.graphemeText;
+      return newLines;
+    },
+
+    /**
+     * Initialize or update text dimensions.
+     * Updates this.width and this.height with the proper values.
+     * Does not return dimensions.
+     */
+    initDimensions: function() {
+      if (this.__skipDimension) {
+        return;
+      }
+      this._splitText();
+      this._clearCache();
+      this.width = this.calcTextWidth() || this.cursorWidth || this.MIN_TEXT_WIDTH;
+      if (this.textAlign.indexOf('justify') !== -1) {
+        // once text is measured we need to make space fatter to make justified text.
+        this.enlargeSpaces();
+      }
+      this.height = this.calcTextHeight();
+      this.saveState({ propertySet: '_dimensionAffectingProps' });
+    },
+
+    /**
+     * Enlarge space boxes and shift the others
+     */
+    enlargeSpaces: function() {
+      var diffSpace, currentLineWidth, numberOfSpaces, accumulatedSpace, line, charBound, spaces;
+      for (var i = 0, len = this._textLines.length; i < len; i++) {
+        if (this.textAlign !== 'justify' && (i === len - 1 || this.isEndOfWrapping(i))) {
+          continue;
+        }
+        accumulatedSpace = 0;
+        line = this._textLines[i];
+        currentLineWidth = this.getLineWidth(i);
+        if (currentLineWidth < this.width && (spaces = this.textLines[i].match(this._reSpacesAndTabs))) {
+          numberOfSpaces = spaces.length;
+          diffSpace = (this.width - currentLineWidth) / numberOfSpaces;
+          for (var j = 0, jlen = line.length; j <= jlen; j++) {
+            charBound = this.__charBounds[i][j];
+            if (this._reSpaceAndTab.test(line[j])) {
+              charBound.width += diffSpace;
+              charBound.kernedWidth += diffSpace;
+              charBound.left += accumulatedSpace;
+              accumulatedSpace += diffSpace;
+            }
+            else {
+              charBound.left += accumulatedSpace;
+            }
+          }
+        }
+      }
+    },
+
+    /**
+     * Detect if the text line is ended with an hard break
+     * text and itext do not have wrapping, return false
+     * @return {Boolean}
+     */
+    isEndOfWrapping: function(lineIndex) {
+      return lineIndex === this._textLines.length - 1;
     },
 
     /**
@@ -190,137 +426,78 @@
     },
 
     /**
+     * Return the dimension and the zoom level needed to create a cache canvas
+     * big enough to host the object to be cached.
+     * @private
+     * @param {Object} dim.x width of object to be cached
+     * @param {Object} dim.y height of object to be cached
+     * @return {Object}.width width of canvas
+     * @return {Object}.height height of canvas
+     * @return {Object}.zoomX zoomX zoom value to unscale the canvas before drawing cache
+     * @return {Object}.zoomY zoomY zoom value to unscale the canvas before drawing cache
+     */
+    _getCacheCanvasDimensions: function() {
+      var dims = this.callSuper('_getCacheCanvasDimensions');
+      var fontSize = this.fontSize;
+      dims.width += fontSize * dims.zoomX;
+      dims.height += fontSize * dims.zoomY;
+      return dims;
+    },
+
+    /**
      * @private
      * @param {CanvasRenderingContext2D} ctx Context to render on
      */
     _render: function(ctx) {
+      this._setTextStyles(ctx);
+      this._renderTextLinesBackground(ctx);
+      this._renderTextDecoration(ctx, 'underline');
+      this._renderText(ctx);
+      this._renderTextDecoration(ctx, 'overline');
+      this._renderTextDecoration(ctx, 'linethrough');
+    },
 
-      var isInPathGroup = this.group && this.group.type !== 'group';
-      if (isInPathGroup && !this.transformMatrix) {
-        ctx.translate(-this.group.width/2 + this.left, -this.group.height / 2 + this.top);
-      }
-      else if (isInPathGroup && this.transformMatrix) {
-        ctx.translate(-this.group.width/2, -this.group.height/2);
-      }
-
-      if (typeof Cufon === 'undefined' || this.useNative === true) {
-        this._renderViaNative(ctx);
+    /**
+     * @private
+     * @param {CanvasRenderingContext2D} ctx Context to render on
+     */
+    _renderText: function(ctx) {
+      if (this.paintFirst === 'stroke') {
+        this._renderTextStroke(ctx);
+        this._renderTextFill(ctx);
       }
       else {
-        this._renderViaCufon(ctx);
+        this._renderTextFill(ctx);
+        this._renderTextStroke(ctx);
       }
     },
 
     /**
+     * Set the font parameter of the context with the object properties or with charStyle
      * @private
      * @param {CanvasRenderingContext2D} ctx Context to render on
+     * @param {Object} [charStyle] object with font style properties
+     * @param {String} [charStyle.fontFamily] Font Family
+     * @param {Number} [charStyle.fontSize] Font size in pixels. ( without px suffix )
+     * @param {String} [charStyle.fontWeight] Font weight
+     * @param {String} [charStyle.fontStyle] Font style (italic|normal)
      */
-    _renderViaNative: function(ctx) {
-
-      this.transform(ctx, fabric.isLikelyNode);
-
-      this._setTextStyles(ctx);
-
-      var textLines = this.text.split(/\r?\n/);
-
-      this.width = this._getTextWidth(ctx, textLines);
-      this.height = this._getTextHeight(ctx, textLines);
-
-      this.clipTo && fabric.util.clipContext(this, ctx);
-
-      this._renderTextBackground(ctx, textLines);
-
-      if (this.textAlign !== 'left' && this.textAlign !== 'justify') {
-        ctx.save();
-        ctx.translate(this.textAlign === 'center' ? (this.width / 2) : this.width, 0);
-      }
-
-      ctx.save();
-      this._setTextShadow(ctx);
-      this._renderTextFill(ctx, textLines);
-      this._renderTextStroke(ctx, textLines);
-      this.textShadow && ctx.restore();
-      ctx.restore();
-
-      if (this.textAlign !== 'left' && this.textAlign !== 'justify') {
-        ctx.restore();
-      }
-
-      this._renderTextDecoration(ctx, textLines);
-      this.clipTo && ctx.restore();
-
-      this._setBoundaries(ctx, textLines);
-      this._totalLineHeight = 0;
-
-      this.setCoords();
-    },
-
-    /**
-     * @private
-     * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {Array} textLines Array of all text lines
-     */
-    _setBoundaries: function(ctx, textLines) {
-      this._boundaries = [ ];
-
-      for (var i = 0, len = textLines.length; i < len; i++) {
-
-        var lineWidth = this._getLineWidth(ctx, textLines[i]);
-        var lineLeftOffset = this._getLineLeftOffset(lineWidth);
-
-        this._boundaries.push({
-          height: this.fontSize * this.lineHeight,
-          width: lineWidth,
-          left: lineLeftOffset
-        });
-      }
-    },
-
-    /**
-     * @private
-     * @param {CanvasRenderingContext2D} ctx Context to render on
-     */
-    _setTextStyles: function(ctx) {
-      if (this.fill) {
-        ctx.fillStyle = this.fill.toLive
-            ? this.fill.toLive(ctx)
-            : this.fill;
-      }
-      if (this.stroke) {
-        ctx.lineWidth = this.strokeWidth;
-        ctx.lineCap = this.strokeLineCap;
-        ctx.lineJoin = this.strokeLineJoin;
-        ctx.miterLimit = this.strokeMiterLimit;
-        ctx.strokeStyle = this.stroke.toLive
-          ? this.stroke.toLive(ctx)
-          : this.stroke;
-      }
+    _setTextStyles: function(ctx, charStyle, forMeasuring) {
       ctx.textBaseline = 'alphabetic';
-      ctx.textAlign = this.textAlign;
-      ctx.font = this._getFontDeclaration();
+      ctx.font = this._getFontDeclaration(charStyle, forMeasuring);
     },
 
     /**
+     * calculate and return the text Width measuring each line.
      * @private
      * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {Array} textLines Array of all text lines
-     * @return {Number} Height of fabric.Text object
-     */
-    _getTextHeight: function(ctx, textLines) {
-      return this.fontSize * textLines.length * this.lineHeight;
-    },
-
-    /**
-     * @private
-     * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {Array} textLines Array of all text lines
      * @return {Number} Maximum width of fabric.Text object
      */
-    _getTextWidth: function(ctx, textLines) {
-      var maxWidth = ctx.measureText(textLines[0]).width;
+    calcTextWidth: function() {
+      var maxWidth = this.getLineWidth(0);
 
-      for (var i = 1, len = textLines.length; i < len; i++) {
-        var currentLineWidth = ctx.measureText(textLines[i]).width;
+      for (var i = 1, len = this._textLines.length; i < len; i++) {
+        var currentLineWidth = this.getLineWidth(i);
         if (currentLineWidth > maxWidth) {
           maxWidth = currentLineWidth;
         }
@@ -330,76 +507,288 @@
 
     /**
      * @private
-     * @param {CanvasRenderingContext2D} ctx Context to render on
-     */
-    _setTextShadow: function(ctx) {
-      if (!this.textShadow) return;
-
-      // "rgba(0,0,0,0.2) 2px 2px 10px"
-      // "rgb(0, 100, 0) 0 0 5px"
-      // "red 2px 2px 1px"
-      // "#f55 123 345 567"
-      var reOffsetsAndBlur = /\s+(-?\d+)(?:px)?\s+(-?\d+)(?:px)?\s+(\d+)(?:px)?\s*/;
-
-      var shadowDeclaration = this.textShadow;
-      var offsetsAndBlur = reOffsetsAndBlur.exec(this.textShadow);
-      var shadowColor = shadowDeclaration.replace(reOffsetsAndBlur, '');
-
-      ctx.save();
-      ctx.shadowColor = shadowColor;
-      ctx.shadowOffsetX = parseInt(offsetsAndBlur[1], 10);
-      ctx.shadowOffsetY = parseInt(offsetsAndBlur[2], 10);
-      ctx.shadowBlur = parseInt(offsetsAndBlur[3], 10);
-
-      this._shadows = [{
-        blur: ctx.shadowBlur,
-        color: ctx.shadowColor,
-        offX: ctx.shadowOffsetX,
-        offY: ctx.shadowOffsetY
-      }];
-
-      this._shadowOffsets = [[
-        parseInt(ctx.shadowOffsetX, 10), parseInt(ctx.shadowOffsetY, 10)
-      ]];
-    },
-
-    /**
-     * @private
      * @param {String} method Method name ("fillText" or "strokeText")
      * @param {CanvasRenderingContext2D} ctx Context to render on
      * @param {String} line Text to render
      * @param {Number} left Left position of text
      * @param {Number} top Top position of text
+     * @param {Number} lineIndex Index of a line in a text
      */
-    _drawTextLine: function(method, ctx, line, left, top) {
+    _renderTextLine: function(method, ctx, line, left, top, lineIndex) {
+      this._renderChars(method, ctx, line, left, top, lineIndex);
+    },
 
-      // short-circuit
-      if (this.textAlign !== 'justify') {
-        ctx[method](line, left, top);
+    /**
+     * Renders the text background for lines, taking care of style
+     * @private
+     * @param {CanvasRenderingContext2D} ctx Context to render on
+     */
+    _renderTextLinesBackground: function(ctx) {
+      if (!this.textBackgroundColor && !this.styleHas('textBackgroundColor')) {
         return;
       }
+      var lineTopOffset = 0, heightOfLine,
+          lineLeftOffset, originalFill = ctx.fillStyle,
+          line, lastColor,
+          leftOffset = this._getLeftOffset(),
+          topOffset = this._getTopOffset(),
+          boxStart = 0, boxWidth = 0, charBox, currentColor;
 
-      var lineWidth = ctx.measureText(line).width;
-      var totalWidth = this.width;
-
-      if (totalWidth > lineWidth) {
-        // stretch the line
-
-        var words = line.split(/\s+/);
-        var wordsWidth = ctx.measureText(line.replace(/\s+/g, '')).width;
-        var widthDiff = totalWidth - wordsWidth;
-        var numSpaces = words.length - 1;
-        var spaceWidth = widthDiff / numSpaces;
-
-        var leftOffset = 0;
-        for (var i = 0, len = words.length; i < len; i++) {
-          ctx[method](words[i], left + leftOffset, top);
-          leftOffset += ctx.measureText(words[i]).width + spaceWidth;
+      for (var i = 0, len = this._textLines.length; i < len; i++) {
+        heightOfLine = this.getHeightOfLine(i);
+        if (!this.textBackgroundColor && !this.styleHas('textBackgroundColor', i)) {
+          lineTopOffset += heightOfLine;
+          continue;
         }
+        line = this._textLines[i];
+        lineLeftOffset = this._getLineLeftOffset(i);
+        boxWidth = 0;
+        boxStart = 0;
+        lastColor = this.getValueOfPropertyAt(i, 0, 'textBackgroundColor');
+        for (var j = 0, jlen = line.length; j < jlen; j++) {
+          charBox = this.__charBounds[i][j];
+          currentColor = this.getValueOfPropertyAt(i, j, 'textBackgroundColor');
+          if (currentColor !== lastColor) {
+            ctx.fillStyle = lastColor;
+            lastColor && ctx.fillRect(
+              leftOffset + lineLeftOffset + boxStart,
+              topOffset + lineTopOffset,
+              boxWidth,
+              heightOfLine / this.lineHeight
+            );
+            boxStart = charBox.left;
+            boxWidth = charBox.width;
+            lastColor = currentColor;
+          }
+          else {
+            boxWidth += charBox.kernedWidth;
+          }
+        }
+        if (currentColor) {
+          ctx.fillStyle = currentColor;
+          ctx.fillRect(
+            leftOffset + lineLeftOffset + boxStart,
+            topOffset + lineTopOffset,
+            boxWidth,
+            heightOfLine / this.lineHeight
+          );
+        }
+        lineTopOffset += heightOfLine;
       }
-      else {
-        ctx[method](line, left, top);
+      ctx.fillStyle = originalFill;
+      // if there is text background color no
+      // other shadows should be casted
+      this._removeShadow(ctx);
+    },
+
+    /**
+     * @private
+     * @param {Object} decl style declaration for cache
+     * @param {String} decl.fontFamily fontFamily
+     * @param {String} decl.fontStyle fontStyle
+     * @param {String} decl.fontWeight fontWeight
+     * @return {Object} reference to cache
+     */
+    getFontCache: function(decl) {
+      var fontFamily = decl.fontFamily.toLowerCase();
+      if (!fabric.charWidthsCache[fontFamily]) {
+        fabric.charWidthsCache[fontFamily] = { };
       }
+      var cache = fabric.charWidthsCache[fontFamily],
+          cacheProp = decl.fontStyle.toLowerCase() + '_' + (decl.fontWeight + '').toLowerCase();
+      if (!cache[cacheProp]) {
+        cache[cacheProp] = { };
+      }
+      return cache[cacheProp];
+    },
+
+    /**
+     * apply all the character style to canvas for rendering
+     * @private
+     * @param {String} _char
+     * @param {Number} lineIndex
+     * @param {Number} charIndex
+     * @param {Object} [decl]
+     */
+    _applyCharStyles: function(method, ctx, lineIndex, charIndex, styleDeclaration) {
+
+      this._setFillStyles(ctx, styleDeclaration);
+      this._setStrokeStyles(ctx, styleDeclaration);
+
+      ctx.font = this._getFontDeclaration(styleDeclaration);
+    },
+
+    /**
+     * measure and return the width of a single character.
+     * possibly overridden to accommodate different measure logic or
+     * to hook some external lib for character measurement
+     * @private
+     * @param {String} char to be measured
+     * @param {Object} charStyle style of char to be measured
+     * @param {String} [previousChar] previous char
+     * @param {Object} [prevCharStyle] style of previous char
+     */
+    _measureChar: function(_char, charStyle, previousChar, prevCharStyle) {
+      // first i try to return from cache
+      var fontCache = this.getFontCache(charStyle), fontDeclaration = this._getFontDeclaration(charStyle),
+          previousFontDeclaration = this._getFontDeclaration(prevCharStyle), couple = previousChar + _char,
+          stylesAreEqual = fontDeclaration === previousFontDeclaration, width, coupleWidth, previousWidth,
+          fontMultiplier = charStyle.fontSize / this.CACHE_FONT_SIZE, kernedWidth;
+
+      if (previousChar && fontCache[previousChar]) {
+        previousWidth = fontCache[previousChar];
+      }
+      if (fontCache[_char]) {
+        kernedWidth = width = fontCache[_char];
+      }
+      if (stylesAreEqual && fontCache[couple]) {
+        coupleWidth = fontCache[couple];
+        kernedWidth = coupleWidth - previousWidth;
+      }
+      if (!width || !previousWidth || !coupleWidth) {
+        var ctx = this.getMeasuringContext();
+        // send a TRUE to specify measuring font size CACHE_FONT_SIZE
+        this._setTextStyles(ctx, charStyle, true);
+      }
+      if (!width) {
+        kernedWidth = width = ctx.measureText(_char).width;
+        fontCache[_char] = width;
+      }
+      if (!previousWidth && stylesAreEqual && previousChar) {
+        previousWidth = ctx.measureText(previousChar).width;
+        fontCache[previousChar] = previousWidth;
+      }
+      if (stylesAreEqual && !coupleWidth) {
+        // we can measure the kerning couple and subtract the width of the previous character
+        coupleWidth = ctx.measureText(couple).width;
+        fontCache[couple] = coupleWidth;
+        kernedWidth = coupleWidth - previousWidth;
+      }
+      return { width: width * fontMultiplier, kernedWidth: kernedWidth * fontMultiplier };
+    },
+
+    /**
+     * Computes height of character at given position
+     * @param {Number} line the line number
+     * @param {Number} char the character number
+     * @return {Number} fontSize of the character
+     */
+    getHeightOfChar: function(line, char) {
+      return this.getValueOfPropertyAt(line, char, 'fontSize');
+    },
+
+    /**
+     * measure a text line measuring all characters.
+     * @param {Number} lineIndex line number
+     * @return {Number} Line width
+     */
+    measureLine: function(lineIndex) {
+      var lineInfo = this._measureLine(lineIndex);
+      if (this.charSpacing !== 0) {
+        lineInfo.width -= this._getWidthOfCharSpacing();
+      }
+      if (lineInfo.width < 0) {
+        lineInfo.width = 0;
+      }
+      return lineInfo;
+    },
+
+    /**
+     * measure every grapheme of a line, populating __charBounds
+     * @param {Number} lineIndex
+     * @return {Object} object.width total width of characters
+     * @return {Object} object.widthOfSpaces length of chars that match this._reSpacesAndTabs
+     */
+    _measureLine: function(lineIndex) {
+      var width = 0, i, grapheme, line = this._textLines[lineIndex], prevGrapheme,
+          graphemeInfo, numOfSpaces = 0, lineBounds = new Array(line.length);
+
+      this.__charBounds[lineIndex] = lineBounds;
+      for (i = 0; i < line.length; i++) {
+        grapheme = line[i];
+        graphemeInfo = this._getGraphemeBox(grapheme, lineIndex, i, prevGrapheme);
+        lineBounds[i] = graphemeInfo;
+        width += graphemeInfo.kernedWidth;
+        prevGrapheme = grapheme;
+      }
+      // this latest bound box represent the last character of the line
+      // to simplify cursor handling in interactive mode.
+      lineBounds[i] = {
+        left: graphemeInfo ? graphemeInfo.left + graphemeInfo.width : 0,
+        width: 0,
+        kernedWidth: 0,
+        height: this.fontSize
+      };
+      return { width: width, numOfSpaces: numOfSpaces };
+    },
+
+    /**
+     * Measure and return the info of a single grapheme.
+     * needs the the info of previous graphemes already filled
+     * @private
+     * @param {String} grapheme to be measured
+     * @param {Number} lineIndex index of the line where the char is
+     * @param {Number} charIndex position in the line
+     * @param {String} [prevGrapheme] character preceding the one to be measured
+     */
+    _getGraphemeBox: function(grapheme, lineIndex, charIndex, prevGrapheme, skipLeft) {
+      var style = this.getCompleteStyleDeclaration(lineIndex, charIndex),
+          prevStyle = prevGrapheme ? this.getCompleteStyleDeclaration(lineIndex, charIndex - 1) : { },
+          info = this._measureChar(grapheme, style, prevGrapheme, prevStyle),
+          kernedWidth = info.kernedWidth,
+          width = info.width, charSpacing;
+
+      if (this.charSpacing !== 0) {
+        charSpacing = this._getWidthOfCharSpacing();
+        width += charSpacing;
+        kernedWidth += charSpacing;
+      }
+
+      var box = {
+        width: width,
+        left: 0,
+        height: style.fontSize,
+        kernedWidth: kernedWidth,
+        deltaY: style.deltaY,
+      };
+      if (charIndex > 0 && !skipLeft) {
+        var previousBox = this.__charBounds[lineIndex][charIndex - 1];
+        box.left = previousBox.left + previousBox.width + info.kernedWidth - info.width;
+      }
+      return box;
+    },
+
+    /**
+     * Calculate height of line at 'lineIndex'
+     * @param {Number} lineIndex index of line to calculate
+     * @return {Number}
+     */
+    getHeightOfLine: function(lineIndex) {
+      if (this.__lineHeights[lineIndex]) {
+        return this.__lineHeights[lineIndex];
+      }
+
+      var line = this._textLines[lineIndex],
+          // char 0 is measured before the line cycle because it nneds to char
+          // emptylines
+          maxHeight = this.getHeightOfChar(lineIndex, 0);
+      for (var i = 1, len = line.length; i < len; i++) {
+        maxHeight = Math.max(this.getHeightOfChar(lineIndex, i), maxHeight);
+      }
+
+      return this.__lineHeights[lineIndex] = maxHeight * this.lineHeight * this._fontSizeMult;
+    },
+
+    /**
+     * Calculate text box height
+     */
+    calcTextHeight: function() {
+      var lineHeight, height = 0;
+      for (var i = 0, len = this._textLines.length; i < len; i++) {
+        lineHeight = this.getHeightOfLine(i);
+        height += (i === len - 1 ? lineHeight / this.lineHeight : lineHeight);
+      }
+      return height;
     },
 
     /**
@@ -407,9 +796,6 @@
      * @return {Number} Left offset
      */
     _getLeftOffset: function() {
-      if (fabric.isLikelyNode && (this.originX === 'left' || this.originX === 'center')) {
-        return 0;
-      }
       return -this.width / 2;
     },
 
@@ -418,124 +804,126 @@
      * @return {Number} Top offset
      */
     _getTopOffset: function() {
-      if (fabric.isLikelyNode) {
-        if (this.originY === 'center') {
-          return -this.height / 2;
-        }
-        else if (this.originY === 'bottom') {
-          return -this.height;
-        }
-        return 0;
-      }
-      // in browser, text drawing always starts at vertical center
       return -this.height / 2;
     },
 
     /**
      * @private
      * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {Array} textLines Array of all text lines
+     * @param {String} method Method name ("fillText" or "strokeText")
      */
-    _renderTextFill: function(ctx, textLines) {
-      if (!this.fill) return;
-
-      this._boundaries = [ ];
-      for (var i = 0, len = textLines.length; i < len; i++) {
-        this._drawTextLine(
-          'fillText',
+    _renderTextCommon: function(ctx, method) {
+      ctx.save();
+      var lineHeights = 0, left = this._getLeftOffset(), top = this._getTopOffset(),
+          offsets = this._applyPatternGradientTransform(ctx, method === 'fillText' ? this.fill : this.stroke);
+      for (var i = 0, len = this._textLines.length; i < len; i++) {
+        var heightOfLine = this.getHeightOfLine(i),
+            maxHeight = heightOfLine / this.lineHeight,
+            leftOffset = this._getLineLeftOffset(i);
+        this._renderTextLine(
+          method,
           ctx,
-          textLines[i],
-          this._getLeftOffset(),
-          this._getTopOffset() + (i * this.fontSize * this.lineHeight) + this.fontSize
+          this._textLines[i],
+          left + leftOffset - offsets.offsetX,
+          top + lineHeights + maxHeight - offsets.offsetY,
+          i
         );
+        lineHeights += heightOfLine;
       }
+      ctx.restore();
     },
 
     /**
      * @private
      * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {Array} textLines Array of all text lines
      */
-    _renderTextStroke: function(ctx, textLines) {
-      if (!this.stroke) return;
+    _renderTextFill: function(ctx) {
+      if (!this.fill && !this.styleHas('fill')) {
+        return;
+      }
+
+      this._renderTextCommon(ctx, 'fillText');
+    },
+
+    /**
+     * @private
+     * @param {CanvasRenderingContext2D} ctx Context to render on
+     */
+    _renderTextStroke: function(ctx) {
+      if ((!this.stroke || this.strokeWidth === 0) && this.isEmptyStyles()) {
+        return;
+      }
+
+      if (this.shadow && !this.shadow.affectStroke) {
+        this._removeShadow(ctx);
+      }
 
       ctx.save();
-      if (this.strokeDashArray) {
-        // Spec requires the concatenation of two copies the dash list when the number of elements is odd
-        if (1 & this.strokeDashArray.length) {
-          this.strokeDashArray.push.apply(this.strokeDashArray, this.strokeDashArray);
-        }
-        supportsLineDash && ctx.setLineDash(this.strokeDashArray);
-      }
-
+      this._setLineDash(ctx, this.strokeDashArray);
       ctx.beginPath();
-      for (var i = 0, len = textLines.length; i < len; i++) {
-        this._drawTextLine(
-          'strokeText',
-          ctx,
-          textLines[i],
-          this._getLeftOffset(),
-          this._getTopOffset() + (i * this.fontSize * this.lineHeight) + this.fontSize
-        );
-      }
+      this._renderTextCommon(ctx, 'strokeText');
       ctx.closePath();
       ctx.restore();
     },
 
     /**
      * @private
+     * @param {String} method
      * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {Array} textLines Array of all text lines
+     * @param {String} line Content of the line
+     * @param {Number} left
+     * @param {Number} top
+     * @param {Number} lineIndex
+     * @param {Number} charOffset
      */
-    _renderTextBackground: function(ctx, textLines) {
-      this._renderTextBoxBackground(ctx);
-      this._renderTextLinesBackground(ctx, textLines);
-    },
-
-    /**
-     * @private
-     * @param {CanvasRenderingContext2D} ctx Context to render on
-     */
-    _renderTextBoxBackground: function(ctx) {
-      if (!this.backgroundColor) return;
+    _renderChars: function(method, ctx, line, left, top, lineIndex) {
+      // set proper line offset
+      var lineHeight = this.getHeightOfLine(lineIndex),
+          isJustify = this.textAlign.indexOf('justify') !== -1,
+          actualStyle,
+          nextStyle,
+          charsToRender = '',
+          charBox,
+          boxWidth = 0,
+          timeToRender,
+          shortCut = !isJustify && this.charSpacing === 0 && this.isEmptyStyles(lineIndex);
 
       ctx.save();
-      ctx.fillStyle = this.backgroundColor;
-
-      ctx.fillRect(
-        this._getLeftOffset(),
-        this._getTopOffset(),
-        this.width,
-        this.height
-      );
-
-      ctx.restore();
-    },
-
-    /**
-     * @private
-     * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {Array} textLines Array of all text lines
-     */
-    _renderTextLinesBackground: function(ctx, textLines) {
-      if (!this.textBackgroundColor) return;
-
-      ctx.save();
-      ctx.fillStyle = this.textBackgroundColor;
-
-      for (var i = 0, len = textLines.length; i < len; i++) {
-
-        if (textLines[i] !== '') {
-
-          var lineWidth = this._getLineWidth(ctx, textLines[i]);
-          var lineLeftOffset = this._getLineLeftOffset(lineWidth);
-
-          ctx.fillRect(
-            this._getLeftOffset() + lineLeftOffset,
-            this._getTopOffset() + (i * this.fontSize * this.lineHeight),
-            lineWidth,
-            this.fontSize * this.lineHeight
-          );
+      top -= lineHeight * this._fontSizeFraction / this.lineHeight;
+      if (shortCut) {
+        // render all the line in one pass without checking
+        this._renderChar(method, ctx, lineIndex, 0, this.textLines[lineIndex], left, top, lineHeight);
+        ctx.restore();
+        return;
+      }
+      for (var i = 0, len = line.length - 1; i <= len; i++) {
+        timeToRender = i === len || this.charSpacing;
+        charsToRender += line[i];
+        charBox = this.__charBounds[lineIndex][i];
+        if (boxWidth === 0) {
+          left += charBox.kernedWidth - charBox.width;
+          boxWidth += charBox.width;
+        }
+        else {
+          boxWidth += charBox.kernedWidth;
+        }
+        if (isJustify && !timeToRender) {
+          if (this._reSpaceAndTab.test(line[i])) {
+            timeToRender = true;
+          }
+        }
+        if (!timeToRender) {
+          // if we have charSpacing, we render char by char
+          actualStyle = actualStyle || this.getCompleteStyleDeclaration(lineIndex, i);
+          nextStyle = this.getCompleteStyleDeclaration(lineIndex, i + 1);
+          timeToRender = this._hasStyleChanged(actualStyle, nextStyle);
+        }
+        if (timeToRender) {
+          this._renderChar(method, ctx, lineIndex, i, charsToRender, left, top, lineHeight);
+          charsToRender = '';
+          actualStyle = nextStyle;
+          left += boxWidth;
+          boxWidth = 0;
         }
       }
       ctx.restore();
@@ -543,14 +931,125 @@
 
     /**
      * @private
-     * @param {Number} lineWidth Width of text line
+     * @param {String} method
+     * @param {CanvasRenderingContext2D} ctx Context to render on
+     * @param {Number} lineIndex
+     * @param {Number} charIndex
+     * @param {String} _char
+     * @param {Number} left Left coordinate
+     * @param {Number} top Top coordinate
+     * @param {Number} lineHeight Height of the line
+     */
+    _renderChar: function(method, ctx, lineIndex, charIndex, _char, left, top) {
+      var decl = this._getStyleDeclaration(lineIndex, charIndex),
+          fullDecl = this.getCompleteStyleDeclaration(lineIndex, charIndex),
+          shouldFill = method === 'fillText' && fullDecl.fill,
+          shouldStroke = method === 'strokeText' && fullDecl.stroke && fullDecl.strokeWidth;
+
+      if (!shouldStroke && !shouldFill) {
+        return;
+      }
+      decl && ctx.save();
+
+      this._applyCharStyles(method, ctx, lineIndex, charIndex, fullDecl);
+
+      if (decl && decl.textBackgroundColor) {
+        this._removeShadow(ctx);
+      }
+      if (decl && decl.deltaY) {
+        top += decl.deltaY;
+      }
+
+      shouldFill && ctx.fillText(_char, left, top);
+      shouldStroke && ctx.strokeText(_char, left, top);
+      decl && ctx.restore();
+    },
+
+    /**
+     * Turns the character into a 'superior figure' (i.e. 'superscript')
+     * @param {Number} start selection start
+     * @param {Number} end selection end
+     * @returns {fabric.Text} thisArg
+     * @chainable
+     */
+    setSuperscript: function(start, end) {
+      return this._setScript(start, end, this.superscript);
+    },
+
+    /**
+     * Turns the character into an 'inferior figure' (i.e. 'subscript')
+     * @param {Number} start selection start
+     * @param {Number} end selection end
+     * @returns {fabric.Text} thisArg
+     * @chainable
+     */
+    setSubscript: function(start, end) {
+      return this._setScript(start, end, this.subscript);
+    },
+
+    /**
+     * Applies 'schema' at given position
+     * @private
+     * @param {Number} start selection start
+     * @param {Number} end selection end
+     * @param {Number} schema
+     * @returns {fabric.Text} thisArg
+     * @chainable
+     */
+    _setScript: function(start, end, schema) {
+      var loc = this.get2DCursorLocation(start, true),
+          fontSize = this.getValueOfPropertyAt(loc.lineIndex, loc.charIndex, 'fontSize'),
+          dy = this.getValueOfPropertyAt(loc.lineIndex, loc.charIndex, 'deltaY'),
+          style = { fontSize: fontSize * schema.size, deltaY: dy + fontSize * schema.baseline };
+      this.setSelectionStyles(style, start, end);
+      return this;
+    },
+
+    /**
+     * @private
+     * @param {Object} prevStyle
+     * @param {Object} thisStyle
+     */
+    _hasStyleChanged: function(prevStyle, thisStyle) {
+      return prevStyle.fill !== thisStyle.fill ||
+              prevStyle.stroke !== thisStyle.stroke ||
+              prevStyle.strokeWidth !== thisStyle.strokeWidth ||
+              prevStyle.fontSize !== thisStyle.fontSize ||
+              prevStyle.fontFamily !== thisStyle.fontFamily ||
+              prevStyle.fontWeight !== thisStyle.fontWeight ||
+              prevStyle.fontStyle !== thisStyle.fontStyle ||
+              prevStyle.deltaY !== thisStyle.deltaY;
+    },
+
+    /**
+     * @private
+     * @param {Object} prevStyle
+     * @param {Object} thisStyle
+     */
+    _hasStyleChangedForSvg: function(prevStyle, thisStyle) {
+      return this._hasStyleChanged(prevStyle, thisStyle) ||
+        prevStyle.overline !== thisStyle.overline ||
+        prevStyle.underline !== thisStyle.underline ||
+        prevStyle.linethrough !== thisStyle.linethrough;
+    },
+
+    /**
+     * @private
+     * @param {Number} lineIndex index text line
      * @return {Number} Line left offset
      */
-    _getLineLeftOffset: function(lineWidth) {
+    _getLineLeftOffset: function(lineIndex) {
+      var lineWidth = this.getLineWidth(lineIndex);
       if (this.textAlign === 'center') {
         return (this.width - lineWidth) / 2;
       }
       if (this.textAlign === 'right') {
+        return this.width - lineWidth;
+      }
+      if (this.textAlign === 'justify-center' && this.isEndOfWrapping(lineIndex)) {
+        return (this.width - lineWidth) / 2;
+      }
+      if (this.textAlign === 'justify-right' && this.isEndOfWrapping(lineIndex)) {
         return this.width - lineWidth;
       }
       return 0;
@@ -558,82 +1057,199 @@
 
     /**
      * @private
-     * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {String} line Text line
+     */
+    _clearCache: function() {
+      this.__lineWidths = [];
+      this.__lineHeights = [];
+      this.__charBounds = [];
+    },
+
+    /**
+     * @private
+     */
+    _shouldClearDimensionCache: function() {
+      var shouldClear = this._forceClearCache;
+      shouldClear || (shouldClear = this.hasStateChanged('_dimensionAffectingProps'));
+      if (shouldClear) {
+        this.dirty = true;
+        this._forceClearCache = false;
+      }
+      return shouldClear;
+    },
+
+    /**
+     * Measure a single line given its index. Used to calculate the initial
+     * text bounding box. The values are calculated and stored in __lineWidths cache.
+     * @private
+     * @param {Number} lineIndex line number
      * @return {Number} Line width
      */
-    _getLineWidth: function(ctx, line) {
-      return this.textAlign === 'justify'
-        ? this.width
-        : ctx.measureText(line).width;
+    getLineWidth: function(lineIndex) {
+      if (this.__lineWidths[lineIndex]) {
+        return this.__lineWidths[lineIndex];
+      }
+
+      var width, line = this._textLines[lineIndex], lineInfo;
+
+      if (line === '') {
+        width = 0;
+      }
+      else {
+        lineInfo = this.measureLine(lineIndex);
+        width = lineInfo.width;
+      }
+      this.__lineWidths[lineIndex] = width;
+      return width;
+    },
+
+    _getWidthOfCharSpacing: function() {
+      if (this.charSpacing !== 0) {
+        return this.fontSize * this.charSpacing / 1000;
+      }
+      return 0;
+    },
+
+    /**
+     * Retrieves the value of property at given character position
+     * @param {Number} lineIndex the line number
+     * @param {Number} charIndex the charater number
+     * @param {String} property the property name
+     * @returns the value of 'property'
+     */
+    getValueOfPropertyAt: function(lineIndex, charIndex, property) {
+      var charStyle = this._getStyleDeclaration(lineIndex, charIndex);
+      if (charStyle && typeof charStyle[property] !== 'undefined') {
+        return charStyle[property];
+      }
+      return this[property];
     },
 
     /**
      * @private
      * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {Array} textLines Array of all text lines
      */
-    _renderTextDecoration: function(ctx, textLines) {
-      if (!this.textDecoration) return;
+    _renderTextDecoration: function(ctx, type) {
+      if (!this[type] && !this.styleHas(type)) {
+        return;
+      }
+      var heightOfLine, size, _size,
+          lineLeftOffset, dy, _dy,
+          line, lastDecoration,
+          leftOffset = this._getLeftOffset(),
+          topOffset = this._getTopOffset(), top,
+          boxStart, boxWidth, charBox, currentDecoration,
+          maxHeight, currentFill, lastFill;
 
-      var halfOfVerticalBox = this.originY === 'top' ? 0 : this._getTextHeight(ctx, textLines) / 2;
-      var _this = this;
-
-      /** @ignore */
-      function renderLinesAtOffset(offset) {
-        for (var i = 0, len = textLines.length; i < len; i++) {
-
-          var lineWidth = _this._getLineWidth(ctx, textLines[i]);
-          var lineLeftOffset = _this._getLineLeftOffset(lineWidth);
-
-          ctx.fillRect(
-            _this._getLeftOffset() + lineLeftOffset,
-            (offset + (i * _this.fontSize * _this.lineHeight)) - halfOfVerticalBox,
-            lineWidth,
-            1);
+      for (var i = 0, len = this._textLines.length; i < len; i++) {
+        heightOfLine = this.getHeightOfLine(i);
+        if (!this[type] && !this.styleHas(type, i)) {
+          topOffset += heightOfLine;
+          continue;
         }
+        line = this._textLines[i];
+        maxHeight = heightOfLine / this.lineHeight;
+        lineLeftOffset = this._getLineLeftOffset(i);
+        boxStart = 0;
+        boxWidth = 0;
+        lastDecoration = this.getValueOfPropertyAt(i, 0, type);
+        lastFill = this.getValueOfPropertyAt(i, 0, 'fill');
+        top = topOffset + maxHeight * (1 - this._fontSizeFraction);
+        size = this.getHeightOfChar(i, 0);
+        dy = this.getValueOfPropertyAt(i, 0, 'deltaY');
+        for (var j = 0, jlen = line.length; j < jlen; j++) {
+          charBox = this.__charBounds[i][j];
+          currentDecoration = this.getValueOfPropertyAt(i, j, type);
+          currentFill = this.getValueOfPropertyAt(i, j, 'fill');
+          _size = this.getHeightOfChar(i, j);
+          _dy = this.getValueOfPropertyAt(i, j, 'deltaY');
+          if ((currentDecoration !== lastDecoration || currentFill !== lastFill || _size !== size || _dy !== dy) &&
+              boxWidth > 0) {
+            ctx.fillStyle = lastFill;
+            lastDecoration && lastFill && ctx.fillRect(
+              leftOffset + lineLeftOffset + boxStart,
+              top + this.offsets[type] * size + dy,
+              boxWidth,
+              this.fontSize / 15
+            );
+            boxStart = charBox.left;
+            boxWidth = charBox.width;
+            lastDecoration = currentDecoration;
+            lastFill = currentFill;
+            size = _size;
+            dy = _dy;
+          }
+          else {
+            boxWidth += charBox.kernedWidth;
+          }
+        }
+        ctx.fillStyle = currentFill;
+        currentDecoration && currentFill && ctx.fillRect(
+          leftOffset + lineLeftOffset + boxStart,
+          top + this.offsets[type] * size + dy,
+          boxWidth,
+          this.fontSize / 15
+        );
+        topOffset += heightOfLine;
       }
-
-      if (this.textDecoration.indexOf('underline') > -1) {
-        renderLinesAtOffset(this.fontSize);
-      }
-      if (this.textDecoration.indexOf('line-through') > -1) {
-        renderLinesAtOffset(this.fontSize / 2);
-      }
-      if (this.textDecoration.indexOf('overline') > -1) {
-        renderLinesAtOffset(0);
-      }
+      // if there is text background color no
+      // other shadows should be casted
+      this._removeShadow(ctx);
     },
 
     /**
-     * @private
+     * return font declaration string for canvas context
+     * @param {Object} [styleObject] object
+     * @returns {String} font declaration formatted for canvas context.
      */
-    _getFontDeclaration: function() {
+    _getFontDeclaration: function(styleObject, forMeasuring) {
+      var style = styleObject || this;
+      var fontFamily = style.fontFamily === undefined ||
+      style.fontFamily.indexOf('\'') > -1 ||
+      style.fontFamily.indexOf('"') > -1
+        ? style.fontFamily : '"' + style.fontFamily + '"';
       return [
         // node-canvas needs "weight style", while browsers need "style weight"
-        (fabric.isLikelyNode ? this.fontWeight : this.fontStyle),
-        (fabric.isLikelyNode ? this.fontStyle : this.fontWeight),
-        this.fontSize + 'px',
-        (fabric.isLikelyNode ? ('"' + this.fontFamily + '"') : this.fontFamily)
+        (fabric.isLikelyNode ? style.fontWeight : style.fontStyle),
+        (fabric.isLikelyNode ? style.fontStyle : style.fontWeight),
+        forMeasuring ? this.CACHE_FONT_SIZE + 'px' : style.fontSize + 'px',
+        fontFamily
       ].join(' ');
     },
 
     /**
      * Renders text instance on a specified context
      * @param {CanvasRenderingContext2D} ctx Context to render on
-     * @param {Boolean} [noTransform] When true, context is not transformed
      */
-    render: function(ctx, noTransform) {
+    render: function(ctx) {
       // do not render if object is not visible
-      if (!this.visible) return;
-
-      ctx.save();
-      this._render(ctx);
-      if (!noTransform && this.active) {
-        this.drawBorders(ctx);
-        this.drawControls(ctx);
+      if (!this.visible) {
+        return;
       }
-      ctx.restore();
+      if (this.canvas && this.canvas.skipOffscreen && !this.group && !this.isOnScreen()) {
+        return;
+      }
+      if (this._shouldClearDimensionCache()) {
+        this.initDimensions();
+      }
+      this.callSuper('render', ctx);
+    },
+
+    /**
+     * Returns the text as an array of lines.
+     * @param {String} text text to split
+     * @returns {Array} Lines in the text
+     */
+    _splitTextIntoLines: function(text) {
+      var lines = text.split(this._reNewline),
+          newLines = new Array(lines.length),
+          newLine = ['\n'],
+          newText = [];
+      for (var i = 0; i < lines.length; i++) {
+        newLines[i] = fabric.util.string.graphemeSplit(lines[i]);
+        newText = newText.concat(newLines[i], newLine);
+      }
+      newText.pop();
+      return { _unwrappedLines: newLines, lines: lines, graphemeText: newText, graphemeLines: newLines };
     },
 
     /**
@@ -642,227 +1258,48 @@
      * @return {Object} Object representation of an instance
      */
     toObject: function(propertiesToInclude) {
-      return extend(this.callSuper('toObject', propertiesToInclude), {
-        text:                 this.text,
-        fontSize:             this.fontSize,
-        fontWeight:           this.fontWeight,
-        fontFamily:           this.fontFamily,
-        fontStyle:            this.fontStyle,
-        lineHeight:           this.lineHeight,
-        textDecoration:       this.textDecoration,
-        textShadow:           this.textShadow,
-        textAlign:            this.textAlign,
-        path:                 this.path,
-        backgroundColor:      this.backgroundColor,
-        textBackgroundColor:  this.textBackgroundColor,
-        useNative:            this.useNative
-      });
-    },
-
-    /* _TO_SVG_START_ */
-    /**
-     * Returns SVG representation of an instance
-     * @return {String} svg representation of an instance
-     */
-    toSVG: function() {
-
-      var textLines = this.text.split(/\r?\n/),
-          lineTopOffset = this.useNative
-            ? this.fontSize * this.lineHeight
-            : (-this._fontAscent - ((this._fontAscent / 5) * this.lineHeight)),
-
-          textLeftOffset = -(this.width/2),
-          textTopOffset = this.useNative
-            ? this.fontSize - 1
-            : (this.height/2) - (textLines.length * this.fontSize) - this._totalLineHeight,
-
-          textAndBg = this._getSVGTextAndBg(lineTopOffset, textLeftOffset, textLines),
-          shadowSpans = this._getSVGShadows(lineTopOffset, textLines);
-
-      // move top offset by an ascent
-      textTopOffset += (this._fontAscent ? ((this._fontAscent / 5) * this.lineHeight) : 0);
-
-      return [
-        '<g transform="', this.getSvgTransform(), '">',
-          textAndBg.textBgRects.join(''),
-          '<text ',
-            (this.fontFamily ? 'font-family="\'' + this.fontFamily + '\'" ': ''),
-            (this.fontSize ? 'font-size="' + this.fontSize + '" ': ''),
-            (this.fontStyle ? 'font-style="' + this.fontStyle + '" ': ''),
-            (this.fontWeight ? 'font-weight="' + this.fontWeight + '" ': ''),
-            (this.textDecoration ? 'text-decoration="' + this.textDecoration + '" ': ''),
-            'style="', this.getSvgStyles(), '" ',
-            /* svg starts from left/bottom corner so we normalize height */
-            'transform="translate(', toFixed(textLeftOffset, 2), ' ', toFixed(textTopOffset, 2), ')">',
-            shadowSpans.join(''),
-            textAndBg.textSpans.join(''),
-          '</text>',
-        '</g>'
-      ].join('');
+      var additionalProperties = [
+        'text',
+        'fontSize',
+        'fontWeight',
+        'fontFamily',
+        'fontStyle',
+        'lineHeight',
+        'underline',
+        'overline',
+        'linethrough',
+        'textAlign',
+        'textBackgroundColor',
+        'charSpacing',
+      ].concat(propertiesToInclude);
+      var obj = this.callSuper('toObject', additionalProperties);
+      obj.styles = clone(this.styles, true);
+      return obj;
     },
 
     /**
-     * @private
-     * @param {Number} lineTopOffset Line top offset
-     * @param {Array} textLines Array of all text lines
-     * @return {Array}
-     */
-    _getSVGShadows: function(lineTopOffset, textLines) {
-      var shadowSpans = [], j, i, jlen, ilen, lineTopOffsetMultiplier = 1;
-
-      if (!this._shadows || !this._boundaries) {
-        return shadowSpans;
-      }
-
-      for (j = 0, jlen = this._shadows.length; j < jlen; j++) {
-        for (i = 0, ilen = textLines.length; i < ilen; i++) {
-          if (textLines[i] !== '') {
-            var lineLeftOffset = (this._boundaries && this._boundaries[i]) ? this._boundaries[i].left : 0;
-            shadowSpans.push(
-              '<tspan x="',
-              toFixed((lineLeftOffset + lineTopOffsetMultiplier) + this._shadowOffsets[j][0], 2),
-              ((i === 0 || this.useNative) ? '" y' : '" dy'), '="',
-              toFixed(this.useNative
-                ? ((lineTopOffset * i) - this.height / 2 + this._shadowOffsets[j][1])
-                : (lineTopOffset + (i === 0 ? this._shadowOffsets[j][1] : 0)), 2),
-              '" ',
-              this._getFillAttributes(this._shadows[j].color), '>',
-              fabric.util.string.escapeXml(textLines[i]),
-            '</tspan>');
-            lineTopOffsetMultiplier = 1;
-          } else {
-            // in some environments (e.g. IE 7 & 8) empty tspans are completely ignored, using a lineTopOffsetMultiplier
-            // prevents empty tspans
-            lineTopOffsetMultiplier++;
-          }
-        }
-      }
-      return shadowSpans;
-    },
-
-    /**
-     * @private
-     * @param {Number} lineTopOffset Line top offset
-     * @param {Number} textLeftOffset Text left offset
-     * @param {Array} textLines Array of all text lines
-     * @return {Object}
-     */
-    _getSVGTextAndBg: function(lineTopOffset, textLeftOffset, textLines) {
-      var textSpans = [ ], textBgRects = [ ], i, lineLeftOffset, len, lineTopOffsetMultiplier = 1;
-
-      // bounding-box background
-      if (this.backgroundColor && this._boundaries) {
-        textBgRects.push(
-          '<rect ',
-            this._getFillAttributes(this.backgroundColor),
-            ' x="',
-            toFixed(-this.width / 2, 2),
-            '" y="',
-            toFixed(-this.height / 2, 2),
-            '" width="',
-            toFixed(this.width, 2),
-            '" height="',
-            toFixed(this.height, 2),
-          '"></rect>');
-      }
-
-      // text and text-background
-      for (i = 0, len = textLines.length; i < len; i++) {
-        if (textLines[i] !== '') {
-          lineLeftOffset = (this._boundaries && this._boundaries[i]) ? toFixed(this._boundaries[i].left, 2) : 0;
-          textSpans.push(
-            '<tspan x="',
-              lineLeftOffset, '" ',
-              (i === 0 || this.useNative ? 'y' : 'dy'), '="',
-              toFixed(this.useNative ? ((lineTopOffset * i) - this.height / 2) : (lineTopOffset * lineTopOffsetMultiplier), 2) , '" ',
-              // doing this on <tspan> elements since setting opacity on containing <text> one doesn't work in Illustrator
-              this._getFillAttributes(this.fill), '>',
-              fabric.util.string.escapeXml(textLines[i]),
-            '</tspan>'
-          );
-          lineTopOffsetMultiplier = 1;
-        }
-        else {
-          // in some environments (e.g. IE 7 & 8) empty tspans are completely ignored, using a lineTopOffsetMultiplier
-          // prevents empty tspans
-          lineTopOffsetMultiplier++;
-        }
-
-        if (!this.textBackgroundColor || !this._boundaries) continue;
-
-        textBgRects.push(
-          '<rect ',
-            this._getFillAttributes(this.textBackgroundColor),
-            ' x="',
-            toFixed(textLeftOffset + this._boundaries[i].left, 2),
-            '" y="',
-            /* an offset that seems to straighten things out */
-            toFixed((lineTopOffset * i) - this.height / 2, 2),
-            '" width="',
-            toFixed(this._boundaries[i].width, 2),
-            '" height="',
-            toFixed(this._boundaries[i].height, 2),
-          '"></rect>');
-      }
-      return {
-        textSpans: textSpans,
-        textBgRects: textBgRects
-      };
-    },
-
-    /**
-     * Adobe Illustrator (at least CS5) is unable to render rgba()-based fill values
-     * we work around it by "moving" alpha channel into opacity attribute and setting fill's alpha to 1
-     *
-     * @private
-     * @param {Any} value
-     * @return {String}
-     */
-    _getFillAttributes: function(value) {
-      var fillColor = (value && typeof value === 'string') ? new fabric.Color(value) : '';
-      if (!fillColor || !fillColor.getSource() || fillColor.getAlpha() === 1) {
-        return 'fill="' + value + '"';
-      }
-      return 'opacity="' + fillColor.getAlpha() + '" fill="' + fillColor.setAlpha(1).toRgb() + '"';
-    },
-    /* _TO_SVG_END_ */
-
-    /**
-     * Sets "color" of an instance (alias of `set('fill', &hellip;)`)
-     * @param {String} value
-     * @return {fabric.Text} thisArg
+     * Sets property to a given value. When changing position/dimension -related properties (left, top, scale, angle, etc.) `set` does not update position of object's borders/controls. If you need to update those, call `setCoords()`.
+     * @param {String|Object} key Property name or object (if object, iterate over the object properties)
+     * @param {Object|Function} value Property value (if function, the value is passed into it and its return value is used as a new one)
+     * @return {fabric.Object} thisArg
      * @chainable
      */
-    setColor: function(value) {
-      this.set('fill', value);
-      return this;
-    },
-
-    /**
-     * Returns actual text value of an instance
-     * @return {String}
-     */
-    getText: function() {
-      return this.text;
-    },
-
-    /**
-     * Sets specified property to a specified value
-     * @param {String} name
-     * @param {Any} value
-     * @return {fabric.Text} thisArg
-     * @chainable
-     */
-    _set: function(name, value) {
-      if (name === 'fontFamily' && this.path) {
-        this.path = this.path.replace(/(.*?)([^\/]*)(\.font\.js)/, '$1' + value + '$3');
+    set: function(key, value) {
+      this.callSuper('set', key, value);
+      var needsDims = false;
+      if (typeof key === 'object') {
+        for (var _key in key) {
+          needsDims = needsDims || this._dimensionAffectingProps.indexOf(_key) !== -1;
+        }
       }
-      this.callSuper('_set', name, value);
-
-      if (name in this._dimensionAffectingProps) {
-        this._initDimensions();
+      else {
+        needsDims = this._dimensionAffectingProps.indexOf(key) !== -1;
+      }
+      if (needsDims) {
+        this.initDimensions();
         this.setCoords();
       }
+      return this;
     },
 
     /**
@@ -878,53 +1315,115 @@
   /**
    * List of attribute names to account for when parsing SVG element (used by {@link fabric.Text.fromElement})
    * @static
+   * @memberOf fabric.Text
+   * @see: http://www.w3.org/TR/SVG/text.html#TextElement
    */
   fabric.Text.ATTRIBUTE_NAMES = fabric.SHARED_ATTRIBUTES.concat(
-    'x y font-family font-style font-weight font-size text-decoration'.split(' '));
+    'x y dx dy font-family font-style font-weight font-size letter-spacing text-decoration text-anchor'.split(' '));
+
+  /**
+   * Default SVG font size
+   * @static
+   * @memberOf fabric.Text
+   */
+  fabric.Text.DEFAULT_SVG_FONT_SIZE = 16;
 
   /**
    * Returns fabric.Text instance from an SVG element (<b>not yet implemented</b>)
    * @static
+   * @memberOf fabric.Text
    * @param {SVGElement} element Element to parse
+   * @param {Function} callback callback function invoked after parsing
    * @param {Object} [options] Options object
-   * @return {fabric.Text} Instance of fabric.Text
    */
-  fabric.Text.fromElement = function(element, options) {
-
+  fabric.Text.fromElement = function(element, callback, options) {
     if (!element) {
-      return null;
+      return callback(null);
     }
 
-    var parsedAttributes = fabric.parseAttributes(element, fabric.Text.ATTRIBUTE_NAMES);
-    options = fabric.util.object.extend((options ? fabric.util.object.clone(options) : { }), parsedAttributes);
+    var parsedAttributes = fabric.parseAttributes(element, fabric.Text.ATTRIBUTE_NAMES),
+        parsedAnchor = parsedAttributes.textAnchor || 'left';
+    options = fabric.util.object.extend((options ? clone(options) : { }), parsedAttributes);
 
-    var text = new fabric.Text(element.textContent, options);
+    options.top = options.top || 0;
+    options.left = options.left || 0;
+    if (parsedAttributes.textDecoration) {
+      var textDecoration = parsedAttributes.textDecoration;
+      if (textDecoration.indexOf('underline') !== -1) {
+        options.underline = true;
+      }
+      if (textDecoration.indexOf('overline') !== -1) {
+        options.overline = true;
+      }
+      if (textDecoration.indexOf('line-through') !== -1) {
+        options.linethrough = true;
+      }
+      delete options.textDecoration;
+    }
+    if ('dx' in parsedAttributes) {
+      options.left += parsedAttributes.dx;
+    }
+    if ('dy' in parsedAttributes) {
+      options.top += parsedAttributes.dy;
+    }
+    if (!('fontSize' in options)) {
+      options.fontSize = fabric.Text.DEFAULT_SVG_FONT_SIZE;
+    }
 
+    var textContent = '';
+
+    // The XML is not properly parsed in IE9 so a workaround to get
+    // textContent is through firstChild.data. Another workaround would be
+    // to convert XML loaded from a file to be converted using DOMParser (same way loadSVGFromString() does)
+    if (!('textContent' in element)) {
+      if ('firstChild' in element && element.firstChild !== null) {
+        if ('data' in element.firstChild && element.firstChild.data !== null) {
+          textContent = element.firstChild.data;
+        }
+      }
+    }
+    else {
+      textContent = element.textContent;
+    }
+
+    textContent = textContent.replace(/^\s+|\s+$|\n+/g, '').replace(/\s+/g, ' ');
+
+    var text = new fabric.Text(textContent, options),
+        textHeightScaleFactor = text.getScaledHeight() / text.height,
+        lineHeightDiff = (text.height + text.strokeWidth) * text.lineHeight - text.height,
+        scaledDiff = lineHeightDiff * textHeightScaleFactor,
+        textHeight = text.getScaledHeight() + scaledDiff,
+        offX = 0;
     /*
       Adjust positioning:
         x/y attributes in SVG correspond to the bottom-left corner of text bounding box
-        top/left properties in Fabric correspond to center point of text bounding box
+        fabric output by default at top, left.
     */
-
+    if (parsedAnchor === 'center') {
+      offX = text.getScaledWidth() / 2;
+    }
+    if (parsedAnchor === 'right') {
+      offX = text.getScaledWidth();
+    }
     text.set({
-      left: text.getLeft() + text.getWidth() / 2,
-      top: text.getTop() - text.getHeight() / 2
+      left: text.left - offX,
+      top: text.top - (textHeight - text.fontSize * (0.18 + text._fontSizeFraction)) / text.lineHeight
     });
-
-    return text;
+    callback(text);
   };
   /* _FROM_SVG_END_ */
 
   /**
    * Returns fabric.Text instance from an object representation
    * @static
-   * @param object {Object} object Object to create an instance from
-   * @return {fabric.Text} Instance of fabric.Text
+   * @memberOf fabric.Text
+   * @param {Object} object Object to create an instance from
+   * @param {Function} [callback] Callback to invoke when an fabric.Text instance is created
    */
-  fabric.Text.fromObject = function(object) {
-    return new fabric.Text(object.text, clone(object));
+  fabric.Text.fromObject = function(object, callback) {
+    return fabric.Object._fromObject('Text', object, callback, 'text');
   };
 
-  fabric.util.createAccessors(fabric.Text);
+  fabric.util.createAccessors && fabric.util.createAccessors(fabric.Text);
 
 })(typeof exports !== 'undefined' ? exports : this);

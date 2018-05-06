@@ -1,33 +1,45 @@
-(function(){
+(function() {
 
-  var getPointer = fabric.util.getPointer,
-      degreesToRadians = fabric.util.degreesToRadians;
+  var degreesToRadians = fabric.util.degreesToRadians;
 
   fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prototype */ {
 
     /**
-     * Determines which one of the four corners has been clicked
+     * The object interactivity controls.
      * @private
-     * @param {Event} e Event object
-     * @param {Object} offset Canvas offset
+     */
+    _controlsVisibility: null,
+
+    /**
+     * Determines which corner has been clicked
+     * @private
+     * @param {Object} pointer The pointer indicating the mouse position
      * @return {String|Boolean} corner code (tl, tr, bl, br, etc.), or false if nothing is found
      */
-    _findTargetCorner: function(e, offset) {
-      if (!this.hasControls || !this.active) return false;
+    _findTargetCorner: function(pointer) {
+      // objects in group, anykind, are not self modificable,
+      // must not return an hovered corner.
+      if (!this.hasControls || this.group || (!this.canvas || this.canvas._activeObject !== this)) {
+        return false;
+      }
 
-      var pointer = getPointer(e, this.canvas.upperCanvasEl),
-          ex = pointer.x - offset.left,
-          ey = pointer.y - offset.top,
+      var ex = pointer.x,
+          ey = pointer.y,
           xPoints,
           lines;
-
+      this.__corner = 0;
       for (var i in this.oCoords) {
+
+        if (!this.isControlVisible(i)) {
+          continue;
+        }
 
         if (i === 'mtr' && !this.hasRotatingPoint) {
           continue;
         }
 
-        if (this.get('lockUniScaling') && (i === 'mt' || i === 'mr' || i === 'mb' || i === 'ml')) {
+        if (this.get('lockUniScaling') &&
+           (i === 'mt' || i === 'mr' || i === 'mb' || i === 'ml')) {
           continue;
         }
 
@@ -47,7 +59,7 @@
         // canvas.contextTop.fillRect(lines.rightline.d.x, lines.rightline.d.y, 2, 2);
         // canvas.contextTop.fillRect(lines.rightline.o.x, lines.rightline.o.y, 2, 2);
 
-        xPoints = this._findCrossPoints({x: ex, y: ey}, lines);
+        xPoints = this._findCrossPoints({ x: ex, y: ey }, lines);
         if (xPoints !== 0 && xPoints % 2 === 1) {
           this.__corner = i;
           return i;
@@ -63,234 +75,106 @@
      */
     _setCornerCoords: function() {
       var coords = this.oCoords,
-          theta = degreesToRadians(this.angle),
           newTheta = degreesToRadians(45 - this.angle),
-          cornerHypotenuse = Math.sqrt(2 * Math.pow(this.cornerSize, 2)) / 2,
-          cosHalfOffset = cornerHypotenuse * Math.cos(newTheta),
-          sinHalfOffset = cornerHypotenuse * Math.sin(newTheta),
-          sinTh = Math.sin(theta),
-          cosTh = Math.cos(theta);
+          /* Math.sqrt(2 * Math.pow(this.cornerSize, 2)) / 2, */
+          /* 0.707106 stands for sqrt(2)/2 */
+          cornerHypotenuse = this.cornerSize * 0.707106,
+          cosHalfOffset = cornerHypotenuse * fabric.util.cos(newTheta),
+          sinHalfOffset = cornerHypotenuse * fabric.util.sin(newTheta),
+          x, y;
 
-      coords.tl.corner = {
-        tl: {
-          x: coords.tl.x - sinHalfOffset,
-          y: coords.tl.y - cosHalfOffset
-        },
-        tr: {
-          x: coords.tl.x + cosHalfOffset,
-          y: coords.tl.y - sinHalfOffset
-        },
-        bl: {
-          x: coords.tl.x - cosHalfOffset,
-          y: coords.tl.y + sinHalfOffset
-        },
-        br: {
-          x: coords.tl.x + sinHalfOffset,
-          y: coords.tl.y + cosHalfOffset
-        }
-      };
-
-      coords.tr.corner = {
-        tl: {
-          x: coords.tr.x - sinHalfOffset,
-          y: coords.tr.y - cosHalfOffset
-        },
-        tr: {
-          x: coords.tr.x + cosHalfOffset,
-          y: coords.tr.y - sinHalfOffset
-        },
-        br: {
-          x: coords.tr.x + sinHalfOffset,
-          y: coords.tr.y + cosHalfOffset
-        },
-        bl: {
-          x: coords.tr.x - cosHalfOffset,
-          y: coords.tr.y + sinHalfOffset
-        }
-      };
-
-      coords.bl.corner = {
-        tl: {
-          x: coords.bl.x - sinHalfOffset,
-          y: coords.bl.y - cosHalfOffset
-        },
-        bl: {
-          x: coords.bl.x - cosHalfOffset,
-          y: coords.bl.y + sinHalfOffset
-        },
-        br: {
-          x: coords.bl.x + sinHalfOffset,
-          y: coords.bl.y + cosHalfOffset
-        },
-        tr: {
-          x: coords.bl.x + cosHalfOffset,
-          y: coords.bl.y - sinHalfOffset
-        }
-      };
-
-      coords.br.corner = {
-        tr: {
-          x: coords.br.x + cosHalfOffset,
-          y: coords.br.y - sinHalfOffset
-        },
-        bl: {
-          x: coords.br.x - cosHalfOffset,
-          y: coords.br.y + sinHalfOffset
-        },
-        br: {
-          x: coords.br.x + sinHalfOffset,
-          y: coords.br.y + cosHalfOffset
-        },
-        tl: {
-          x: coords.br.x - sinHalfOffset,
-          y: coords.br.y - cosHalfOffset
-        }
-      };
-
-      coords.ml.corner = {
-        tl: {
-          x: coords.ml.x - sinHalfOffset,
-          y: coords.ml.y - cosHalfOffset
-        },
-        tr: {
-          x: coords.ml.x + cosHalfOffset,
-          y: coords.ml.y - sinHalfOffset
-        },
-        bl: {
-          x: coords.ml.x - cosHalfOffset,
-          y: coords.ml.y + sinHalfOffset
-        },
-        br: {
-          x: coords.ml.x + sinHalfOffset,
-          y: coords.ml.y + cosHalfOffset
-        }
-      };
-
-      coords.mt.corner = {
-        tl: {
-          x: coords.mt.x - sinHalfOffset,
-          y: coords.mt.y - cosHalfOffset
-        },
-        tr: {
-          x: coords.mt.x + cosHalfOffset,
-          y: coords.mt.y - sinHalfOffset
-        },
-        bl: {
-          x: coords.mt.x - cosHalfOffset,
-          y: coords.mt.y + sinHalfOffset
-        },
-        br: {
-          x: coords.mt.x + sinHalfOffset,
-          y: coords.mt.y + cosHalfOffset
-        }
-      };
-
-      coords.mr.corner = {
-        tl: {
-          x: coords.mr.x - sinHalfOffset,
-          y: coords.mr.y - cosHalfOffset
-        },
-        tr: {
-          x: coords.mr.x + cosHalfOffset,
-          y: coords.mr.y - sinHalfOffset
-        },
-        bl: {
-          x: coords.mr.x - cosHalfOffset,
-          y: coords.mr.y + sinHalfOffset
-        },
-        br: {
-          x: coords.mr.x + sinHalfOffset,
-          y: coords.mr.y + cosHalfOffset
-        }
-      };
-
-      coords.mb.corner = {
-        tl: {
-          x: coords.mb.x - sinHalfOffset,
-          y: coords.mb.y - cosHalfOffset
-        },
-        tr: {
-          x: coords.mb.x + cosHalfOffset,
-          y: coords.mb.y - sinHalfOffset
-        },
-        bl: {
-          x: coords.mb.x - cosHalfOffset,
-          y: coords.mb.y + sinHalfOffset
-        },
-        br: {
-          x: coords.mb.x + sinHalfOffset,
-          y: coords.mb.y + cosHalfOffset
-        }
-      };
-
-      coords.mtr.corner = {
-        tl: {
-          x: coords.mtr.x - sinHalfOffset + (sinTh * this.rotatingPointOffset),
-          y: coords.mtr.y - cosHalfOffset - (cosTh * this.rotatingPointOffset)
-        },
-        tr: {
-          x: coords.mtr.x + cosHalfOffset + (sinTh * this.rotatingPointOffset),
-          y: coords.mtr.y - sinHalfOffset - (cosTh * this.rotatingPointOffset)
-        },
-        bl: {
-          x: coords.mtr.x - cosHalfOffset + (sinTh * this.rotatingPointOffset),
-          y: coords.mtr.y + sinHalfOffset - (cosTh * this.rotatingPointOffset)
-        },
-        br: {
-          x: coords.mtr.x + sinHalfOffset + (sinTh * this.rotatingPointOffset),
-          y: coords.mtr.y + cosHalfOffset - (cosTh * this.rotatingPointOffset)
-        }
-      };
+      for (var point in coords) {
+        x = coords[point].x;
+        y = coords[point].y;
+        coords[point].corner = {
+          tl: {
+            x: x - sinHalfOffset,
+            y: y - cosHalfOffset
+          },
+          tr: {
+            x: x + cosHalfOffset,
+            y: y - sinHalfOffset
+          },
+          bl: {
+            x: x - cosHalfOffset,
+            y: y + sinHalfOffset
+          },
+          br: {
+            x: x + sinHalfOffset,
+            y: y + cosHalfOffset
+          }
+        };
+      }
     },
+
+    /**
+     * Draws a colored layer behind the object, inside its selection borders.
+     * Requires public options: padding, selectionBackgroundColor
+     * this function is called when the context is transformed
+     * has checks to be skipped when the object is on a staticCanvas
+     * @param {CanvasRenderingContext2D} ctx Context to draw on
+     * @return {fabric.Object} thisArg
+     * @chainable
+     */
+    drawSelectionBackground: function(ctx) {
+      if (!this.selectionBackgroundColor ||
+        (this.canvas && !this.canvas.interactive) ||
+        (this.canvas && this.canvas._activeObject !== this)
+      ) {
+        return this;
+      }
+      ctx.save();
+      var center = this.getCenterPoint(), wh = this._calculateCurrentDimensions(),
+          vpt = this.canvas.viewportTransform;
+      ctx.translate(center.x, center.y);
+      ctx.scale(1 / vpt[0], 1 / vpt[3]);
+      ctx.rotate(degreesToRadians(this.angle));
+      ctx.fillStyle = this.selectionBackgroundColor;
+      ctx.fillRect(-wh.x / 2, -wh.y / 2, wh.x, wh.y);
+      ctx.restore();
+      return this;
+    },
+
     /**
      * Draws borders of an object's bounding box.
      * Requires public properties: width, height
      * Requires public options: padding, borderColor
      * @param {CanvasRenderingContext2D} ctx Context to draw on
+     * @param {Object} styleOverride object to override the object style
      * @return {fabric.Object} thisArg
      * @chainable
      */
-    drawBorders: function(ctx) {
-      if (!this.hasBorders) return this;
-
-      var padding = this.padding,
-          padding2 = padding * 2,
-          strokeWidth = this.strokeWidth > 1 ? this.strokeWidth : 0;
+    drawBorders: function(ctx, styleOverride) {
+      styleOverride = styleOverride || {};
+      var wh = this._calculateCurrentDimensions(),
+          strokeWidth = 1 / this.borderScaleFactor,
+          width = wh.x + strokeWidth,
+          height = wh.y + strokeWidth,
+          drawRotatingPoint = typeof styleOverride.hasRotatingPoint !== 'undefined' ?
+            styleOverride.hasRotatingPoint : this.hasRotatingPoint,
+          hasControls = typeof styleOverride.hasControls !== 'undefined' ?
+            styleOverride.hasControls : this.hasControls,
+          rotatingPointOffset = typeof styleOverride.rotatingPointOffset !== 'undefined' ?
+            styleOverride.rotatingPointOffset : this.rotatingPointOffset;
 
       ctx.save();
-
-      ctx.globalAlpha = this.isMoving ? this.borderOpacityWhenMoving : 1;
-      ctx.strokeStyle = this.borderColor;
-
-      var scaleX = 1 / this._constrainScale(this.scaleX),
-          scaleY = 1 / this._constrainScale(this.scaleY);
-
-      ctx.lineWidth = 1 / this.borderScaleFactor;
-
-      ctx.scale(scaleX, scaleY);
-
-      var w = this.getWidth(),
-          h = this.getHeight();
+      ctx.strokeStyle = styleOverride.borderColor || this.borderColor;
+      this._setLineDash(ctx, styleOverride.borderDashArray || this.borderDashArray, null);
 
       ctx.strokeRect(
-        ~~(-(w / 2) - padding - strokeWidth / 2 * this.scaleX) + 0.5, // offset needed to make lines look sharper
-        ~~(-(h / 2) - padding - strokeWidth / 2 * this.scaleY) + 0.5,
-        ~~(w + padding2 + strokeWidth * this.scaleX),
-        ~~(h + padding2 + strokeWidth * this.scaleY)
+        -width / 2,
+        -height / 2,
+        width,
+        height
       );
 
-      if (this.hasRotatingPoint && !this.get('lockRotation') && this.hasControls) {
+      if (drawRotatingPoint && this.isControlVisible('mtr') && hasControls) {
 
-        var rotateHeight = (
-          this.flipY
-            ? h + (strokeWidth * this.scaleY) + (padding * 2)
-            : -h - (strokeWidth * this.scaleY) - (padding * 2)
-        ) / 2;
+        var rotateHeight = -height / 2;
 
         ctx.beginPath();
         ctx.moveTo(0, rotateHeight);
-        ctx.lineTo(0, rotateHeight + (this.flipY ? this.rotatingPointOffset : -this.rotatingPointOffset));
-        ctx.closePath();
+        ctx.lineTo(0, rotateHeight - rotatingPointOffset);
         ctx.stroke();
       }
 
@@ -299,117 +183,237 @@
     },
 
     /**
-     * Draws corners of an object's bounding box.
-     * Requires public properties: width, height, scaleX, scaleY
-     * Requires public options: cornerSize, padding
+     * Draws borders of an object's bounding box when it is inside a group.
+     * Requires public properties: width, height
+     * Requires public options: padding, borderColor
      * @param {CanvasRenderingContext2D} ctx Context to draw on
+     * @param {object} options object representing current object parameters
+     * @param {Object} styleOverride object to override the object style
      * @return {fabric.Object} thisArg
      * @chainable
      */
-    drawControls: function(ctx) {
-      if (!this.hasControls) return this;
-
-      var size = this.cornerSize,
-          size2 = size / 2,
-          strokeWidth2 = this.strokeWidth > 1 ? (this.strokeWidth / 2) : 0,
-          left = -(this.width / 2),
-          top = -(this.height / 2),
-          _left,
-          _top,
-          sizeX = size / this.scaleX,
-          sizeY = size / this.scaleY,
-          paddingX = this.padding / this.scaleX,
-          paddingY = this.padding / this.scaleY,
-          scaleOffsetY = size2 / this.scaleY,
-          scaleOffsetX = size2 / this.scaleX,
-          scaleOffsetSizeX = (size2 - size) / this.scaleX,
-          scaleOffsetSizeY = (size2 - size) / this.scaleY,
-          height = this.height,
-          width = this.width,
-          methodName = this.transparentCorners ? 'strokeRect' : 'fillRect',
-          transparent = this.transparentCorners,
-          isVML = typeof G_vmlCanvasManager !== 'undefined';
+    drawBordersInGroup: function(ctx, options, styleOverride) {
+      styleOverride = styleOverride || {};
+      var p = this._getNonTransformedDimensions(),
+          matrix = fabric.util.customTransformMatrix(options.scaleX, options.scaleY, options.skewX),
+          wh = fabric.util.transformPoint(p, matrix),
+          strokeWidth = 1 / this.borderScaleFactor,
+          width = wh.x + strokeWidth,
+          height = wh.y + strokeWidth;
 
       ctx.save();
+      this._setLineDash(ctx, styleOverride.borderDashArray || this.borderDashArray, null);
+      ctx.strokeStyle = styleOverride.borderColor || this.borderColor;
 
-      ctx.lineWidth = 1 / Math.max(this.scaleX, this.scaleY);
+      ctx.strokeRect(
+        -width / 2,
+        -height / 2,
+        width,
+        height
+      );
 
-      ctx.globalAlpha = this.isMoving ? this.borderOpacityWhenMoving : 1;
-      ctx.strokeStyle = ctx.fillStyle = this.cornerColor;
+      ctx.restore();
+      return this;
+    },
+
+    /**
+     * Draws corners of an object's bounding box.
+     * Requires public properties: width, height
+     * Requires public options: cornerSize, padding
+     * @param {CanvasRenderingContext2D} ctx Context to draw on
+     * @param {Object} styleOverride object to override the object style
+     * @return {fabric.Object} thisArg
+     * @chainable
+     */
+    drawControls: function(ctx, styleOverride) {
+      styleOverride = styleOverride || {};
+      var wh = this._calculateCurrentDimensions(),
+          width = wh.x,
+          height = wh.y,
+          scaleOffset = styleOverride.cornerSize || this.cornerSize,
+          left = -(width + scaleOffset) / 2,
+          top = -(height + scaleOffset) / 2,
+          transparentCorners = typeof styleOverride.transparentCorners !== 'undefined' ?
+            styleOverride.transparentCorners : this.transparentCorners,
+          hasRotatingPoint = typeof styleOverride.hasRotatingPoint !== 'undefined' ?
+            styleOverride.hasRotatingPoint : this.hasRotatingPoint,
+          methodName = transparentCorners ? 'stroke' : 'fill';
+
+      ctx.save();
+      ctx.strokeStyle = ctx.fillStyle = styleOverride.cornerColor || this.cornerColor;
+      if (!this.transparentCorners) {
+        ctx.strokeStyle = styleOverride.cornerStrokeColor || this.cornerStrokeColor;
+      }
+      this._setLineDash(ctx, styleOverride.cornerDashArray || this.cornerDashArray, null);
 
       // top-left
-      _left = left - scaleOffsetX - strokeWidth2 - paddingX;
-      _top = top - scaleOffsetY - strokeWidth2 - paddingY;
-
-      isVML || transparent || ctx.clearRect(_left, _top, sizeX, sizeY);
-      ctx[methodName](_left, _top, sizeX, sizeY);
+      this._drawControl('tl', ctx, methodName,
+        left,
+        top, styleOverride);
 
       // top-right
-      _left = left + width - scaleOffsetX + strokeWidth2 + paddingX;
-      _top = top - scaleOffsetY - strokeWidth2 - paddingY;
-
-      isVML || transparent || ctx.clearRect(_left, _top, sizeX, sizeY);
-      ctx[methodName](_left, _top, sizeX, sizeY);
+      this._drawControl('tr', ctx, methodName,
+        left + width,
+        top, styleOverride);
 
       // bottom-left
-      _left = left - scaleOffsetX - strokeWidth2 - paddingX;
-      _top = top + height + scaleOffsetSizeY + strokeWidth2 + paddingY;
-
-      isVML || transparent || ctx.clearRect(_left, _top, sizeX, sizeY);
-      ctx[methodName](_left, _top, sizeX, sizeY);
+      this._drawControl('bl', ctx, methodName,
+        left,
+        top + height, styleOverride);
 
       // bottom-right
-      _left = left + width + scaleOffsetSizeX + strokeWidth2 + paddingX;
-      _top = top + height + scaleOffsetSizeY + strokeWidth2 + paddingY;
-
-      isVML || transparent || ctx.clearRect(_left, _top, sizeX, sizeY);
-      ctx[methodName](_left, _top, sizeX, sizeY);
+      this._drawControl('br', ctx, methodName,
+        left + width,
+        top + height, styleOverride);
 
       if (!this.get('lockUniScaling')) {
-        // middle-top
-        _left = left + width/2 - scaleOffsetX;
-        _top = top - scaleOffsetY - strokeWidth2 - paddingY;
 
-        isVML || transparent || ctx.clearRect(_left, _top, sizeX, sizeY);
-        ctx[methodName](_left, _top, sizeX, sizeY);
+        // middle-top
+        this._drawControl('mt', ctx, methodName,
+          left + width / 2,
+          top, styleOverride);
 
         // middle-bottom
-        _left = left + width/2 - scaleOffsetX;
-        _top = top + height + scaleOffsetSizeY + strokeWidth2 + paddingY;
-
-        isVML || transparent || ctx.clearRect(_left, _top, sizeX, sizeY);
-        ctx[methodName](_left, _top, sizeX, sizeY);
+        this._drawControl('mb', ctx, methodName,
+          left + width / 2,
+          top + height, styleOverride);
 
         // middle-right
-        _left = left + width + scaleOffsetSizeX + strokeWidth2 + paddingX;
-        _top = top + height/2 - scaleOffsetY;
-
-        isVML || transparent || ctx.clearRect(_left, _top, sizeX, sizeY);
-        ctx[methodName](_left, _top, sizeX, sizeY);
+        this._drawControl('mr', ctx, methodName,
+          left + width,
+          top + height / 2, styleOverride);
 
         // middle-left
-        _left = left - scaleOffsetX - strokeWidth2 - paddingX;
-        _top = top + height/2 - scaleOffsetY;
-
-        isVML || transparent || ctx.clearRect(_left, _top, sizeX, sizeY);
-        ctx[methodName](_left, _top, sizeX, sizeY);
+        this._drawControl('ml', ctx, methodName,
+          left,
+          top + height / 2, styleOverride);
       }
 
       // middle-top-rotate
-      if (this.hasRotatingPoint) {
-
-        _left = left + width/2 - scaleOffsetX;
-        _top = this.flipY ?
-          (top + height + (this.rotatingPointOffset / this.scaleY) - sizeY/2 + strokeWidth2 + paddingY)
-          : (top - (this.rotatingPointOffset / this.scaleY) - sizeY/2 - strokeWidth2 - paddingY);
-
-        isVML || transparent || ctx.clearRect(_left, _top, sizeX, sizeY);
-        ctx[methodName](_left, _top, sizeX, sizeY);
+      if (hasRotatingPoint) {
+        this._drawControl('mtr', ctx, methodName,
+          left + width / 2,
+          top - this.rotatingPointOffset, styleOverride);
       }
 
       ctx.restore();
 
       return this;
+    },
+
+    /**
+     * @private
+     */
+    _drawControl: function(control, ctx, methodName, left, top, styleOverride) {
+      styleOverride = styleOverride || {};
+      if (!this.isControlVisible(control)) {
+        return;
+      }
+      var size = this.cornerSize, stroke = !this.transparentCorners && this.cornerStrokeColor;
+      switch (styleOverride.cornerStyle || this.cornerStyle) {
+        case 'circle':
+          ctx.beginPath();
+          ctx.arc(left + size / 2, top + size / 2, size / 2, 0, 2 * Math.PI, false);
+          ctx[methodName]();
+          if (stroke) {
+            ctx.stroke();
+          }
+          break;
+        default:
+          this.transparentCorners || ctx.clearRect(left, top, size, size);
+          ctx[methodName + 'Rect'](left, top, size, size);
+          if (stroke) {
+            ctx.strokeRect(left, top, size, size);
+          }
+      }
+    },
+
+    /**
+     * Returns true if the specified control is visible, false otherwise.
+     * @param {String} controlName The name of the control. Possible values are 'tl', 'tr', 'br', 'bl', 'ml', 'mt', 'mr', 'mb', 'mtr'.
+     * @returns {Boolean} true if the specified control is visible, false otherwise
+     */
+    isControlVisible: function(controlName) {
+      return this._getControlsVisibility()[controlName];
+    },
+
+    /**
+     * Sets the visibility of the specified control.
+     * @param {String} controlName The name of the control. Possible values are 'tl', 'tr', 'br', 'bl', 'ml', 'mt', 'mr', 'mb', 'mtr'.
+     * @param {Boolean} visible true to set the specified control visible, false otherwise
+     * @return {fabric.Object} thisArg
+     * @chainable
+     */
+    setControlVisible: function(controlName, visible) {
+      this._getControlsVisibility()[controlName] = visible;
+      return this;
+    },
+
+    /**
+     * Sets the visibility state of object controls.
+     * @param {Object} [options] Options object
+     * @param {Boolean} [options.bl] true to enable the bottom-left control, false to disable it
+     * @param {Boolean} [options.br] true to enable the bottom-right control, false to disable it
+     * @param {Boolean} [options.mb] true to enable the middle-bottom control, false to disable it
+     * @param {Boolean} [options.ml] true to enable the middle-left control, false to disable it
+     * @param {Boolean} [options.mr] true to enable the middle-right control, false to disable it
+     * @param {Boolean} [options.mt] true to enable the middle-top control, false to disable it
+     * @param {Boolean} [options.tl] true to enable the top-left control, false to disable it
+     * @param {Boolean} [options.tr] true to enable the top-right control, false to disable it
+     * @param {Boolean} [options.mtr] true to enable the middle-top-rotate control, false to disable it
+     * @return {fabric.Object} thisArg
+     * @chainable
+     */
+    setControlsVisibility: function(options) {
+      options || (options = { });
+
+      for (var p in options) {
+        this.setControlVisible(p, options[p]);
+      }
+      return this;
+    },
+
+    /**
+     * Returns the instance of the control visibility set for this object.
+     * @private
+     * @returns {Object}
+     */
+    _getControlsVisibility: function() {
+      if (!this._controlsVisibility) {
+        this._controlsVisibility = {
+          tl: true,
+          tr: true,
+          br: true,
+          bl: true,
+          ml: true,
+          mt: true,
+          mr: true,
+          mb: true,
+          mtr: true
+        };
+      }
+      return this._controlsVisibility;
+    },
+
+    /**
+     * This callback function is called every time _discardActiveObject or _setActiveObject
+     * try to to deselect this object. If the function returns true, the process is cancelled
+     * @param {Object} [options] options sent from the upper functions
+     * @param {Event} [options.e] event if the process is generated by an event
+     */
+    onDeselect: function() {
+      // implemented by sub-classes, as needed.
+    },
+
+
+    /**
+     * This callback function is called every time _discardActiveObject or _setActiveObject
+     * try to to select this object. If the function returns true, the process is cancelled
+     * @param {Object} [options] options sent from the upper functions
+     * @param {Event} [options.e] event if the process is generated by an event
+     */
+    onSelect: function() {
+      // implemented by sub-classes, as needed.
     }
   });
 })();

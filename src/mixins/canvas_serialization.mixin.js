@@ -1,107 +1,142 @@
 fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.StaticCanvas.prototype */ {
 
   /**
-   * Populates canvas with data from the specified dataless JSON
-   * JSON format must conform to the one of `fabric.Canvas#toDatalessJSON`
+   * Populates canvas with data from the specified dataless JSON.
+   * JSON format must conform to the one of {@link fabric.Canvas#toDatalessJSON}
    * @deprecated since 1.2.2
    * @param {String|Object} json JSON string or object
    * @param {Function} callback Callback, invoked when json is parsed
-   *                            and corresponding objects (e.g: fabric.Image)
+   *                            and corresponding objects (e.g: {@link fabric.Image})
    *                            are initialized
+   * @param {Function} [reviver] Method for further parsing of JSON elements, called after each fabric object created.
    * @return {fabric.Canvas} instance
    * @chainable
+   * @tutorial {@link http://fabricjs.com/fabric-intro-part-3#deserialization}
    */
-  loadFromDatalessJSON: function (json, callback) {
-    return this.loadFromJSON(json, callback);
+  loadFromDatalessJSON: function (json, callback, reviver) {
+    return this.loadFromJSON(json, callback, reviver);
   },
 
   /**
-   * Populates canvas with data from the specified JSON
-   * JSON format must conform to the one of `fabric.Canvas#toJSON`
+   * Populates canvas with data from the specified JSON.
+   * JSON format must conform to the one of {@link fabric.Canvas#toJSON}
    * @param {String|Object} json JSON string or object
    * @param {Function} callback Callback, invoked when json is parsed
-   *                            and corresponding objects (e.g: fabric.Image)
+   *                            and corresponding objects (e.g: {@link fabric.Image})
    *                            are initialized
+   * @param {Function} [reviver] Method for further parsing of JSON elements, called after each fabric object created.
    * @return {fabric.Canvas} instance
    * @chainable
+   * @tutorial {@link http://fabricjs.com/fabric-intro-part-3#deserialization}
+   * @see {@link http://jsfiddle.net/fabricjs/fmgXt/|jsFiddle demo}
+   * @example <caption>loadFromJSON</caption>
+   * canvas.loadFromJSON(json, canvas.renderAll.bind(canvas));
+   * @example <caption>loadFromJSON with reviver</caption>
+   * canvas.loadFromJSON(json, canvas.renderAll.bind(canvas), function(o, object) {
+   *   // `o` = json object
+   *   // `object` = fabric.Object instance
+   *   // ... do some stuff ...
+   * });
    */
-  loadFromJSON: function (json, callback) {
-    if (!json) return;
+  loadFromJSON: function (json, callback, reviver) {
+    if (!json) {
+      return;
+    }
 
     // serialize if it wasn't already
     var serialized = (typeof json === 'string')
       ? JSON.parse(json)
-      : json;
+      : fabric.util.object.clone(json);
 
-    this.clear();
+    var _this = this,
+        renderOnAddRemove = this.renderOnAddRemove;
+    this.renderOnAddRemove = false;
 
-    var _this = this;
-    this._enlivenObjects(serialized.objects, function () {
-      _this._setBgOverlayImages(serialized, callback);
-    });
-
+    this._enlivenObjects(serialized.objects, function (enlivenedObjects) {
+      _this.clear();
+      _this._setBgOverlay(serialized, function () {
+        enlivenedObjects.forEach(function(obj, index) {
+          // we splice the array just in case some custom classes restored from JSON
+          // will add more object to canvas at canvas init.
+          _this.insertAt(obj, index);
+        });
+        _this.renderOnAddRemove = renderOnAddRemove;
+        // remove parts i cannot set as options
+        delete serialized.objects;
+        delete serialized.backgroundImage;
+        delete serialized.overlayImage;
+        delete serialized.background;
+        delete serialized.overlay;
+        // this._initOptions does too many things to just
+        // call it. Normally loading an Object from JSON
+        // create the Object instance. Here the Canvas is
+        // already an instance and we are just loading things over it
+        _this._setOptions(serialized);
+        _this.renderAll();
+        callback && callback();
+      });
+    }, reviver);
     return this;
   },
 
-  _setBgOverlayImages: function(serialized, callback) {
-
-    var _this = this,
-        backgroundPatternLoaded,
-        backgroundImageLoaded,
-        overlayImageLoaded;
-
-    var cbIfLoaded = function () {
-      callback && backgroundImageLoaded && overlayImageLoaded && backgroundPatternLoaded && callback();
+  /**
+   * @private
+   * @param {Object} serialized Object with background and overlay information
+   * @param {Function} callback Invoked after all background and overlay images/patterns loaded
+   */
+  _setBgOverlay: function(serialized, callback) {
+    var loaded = {
+      backgroundColor: false,
+      overlayColor: false,
+      backgroundImage: false,
+      overlayImage: false
     };
 
-    if (serialized.backgroundImage) {
-      this.setBackgroundImage(serialized.backgroundImage, function() {
-
-        _this.backgroundImageOpacity = serialized.backgroundImageOpacity;
-        _this.backgroundImageStretch = serialized.backgroundImageStretch;
-
-        _this.renderAll();
-
-        backgroundImageLoaded = true;
-
-        cbIfLoaded();
-      });
-    }
-    else {
-      backgroundImageLoaded = true;
-    }
-
-    if (serialized.overlayImage) {
-      this.setOverlayImage(serialized.overlayImage, function() {
-
-        _this.overlayImageLeft = serialized.overlayImageLeft || 0;
-        _this.overlayImageTop = serialized.overlayImageTop || 0;
-
-        _this.renderAll();
-        overlayImageLoaded = true;
-
-        cbIfLoaded();
-      });
-    }
-    else {
-      overlayImageLoaded = true;
-    }
-
-    if (serialized.background) {
-      this.setBackgroundColor(serialized.background, function() {
-
-        _this.renderAll();
-        backgroundPatternLoaded = true;
-
-        cbIfLoaded();
-      });
-    }
-    else {
-      backgroundPatternLoaded = true;
-    }
-
-    if (!serialized.backgroundImage && !serialized.overlayImage && !serialized.background) {
+    if (!serialized.backgroundImage && !serialized.overlayImage && !serialized.background && !serialized.overlay) {
       callback && callback();
+      return;
+    }
+
+    var cbIfLoaded = function () {
+      if (loaded.backgroundImage && loaded.overlayImage && loaded.backgroundColor && loaded.overlayColor) {
+        callback && callback();
+      }
+    };
+
+    this.__setBgOverlay('backgroundImage', serialized.backgroundImage, loaded, cbIfLoaded);
+    this.__setBgOverlay('overlayImage', serialized.overlayImage, loaded, cbIfLoaded);
+    this.__setBgOverlay('backgroundColor', serialized.background, loaded, cbIfLoaded);
+    this.__setBgOverlay('overlayColor', serialized.overlay, loaded, cbIfLoaded);
+  },
+
+  /**
+   * @private
+   * @param {String} property Property to set (backgroundImage, overlayImage, backgroundColor, overlayColor)
+   * @param {(Object|String)} value Value to set
+   * @param {Object} loaded Set loaded property to true if property is set
+   * @param {Object} callback Callback function to invoke after property is set
+   */
+  __setBgOverlay: function(property, value, loaded, callback) {
+    var _this = this;
+
+    if (!value) {
+      loaded[property] = true;
+      callback && callback();
+      return;
+    }
+
+    if (property === 'backgroundImage' || property === 'overlayImage') {
+      fabric.util.enlivenObjects([value], function(enlivedObject){
+        _this[property] = enlivedObject[0];
+        loaded[property] = true;
+        callback && callback();
+      });
+    }
+    else {
+      this['set' + fabric.util.string.capitalize(property, true)](value, function() {
+        loaded[property] = true;
+        callback && callback();
+      });
     }
   },
 
@@ -109,25 +144,17 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
    * @private
    * @param {Array} objects
    * @param {Function} callback
+   * @param {Function} [reviver]
    */
-  _enlivenObjects: function (objects, callback) {
-    var _this = this;
-
-    if (objects.length === 0) {
-      callback && callback();
+  _enlivenObjects: function (objects, callback, reviver) {
+    if (!objects || objects.length === 0) {
+      callback && callback([]);
+      return;
     }
 
-    var renderOnAddition = this.renderOnAddition;
-    this.renderOnAddition = false;
-
     fabric.util.enlivenObjects(objects, function(enlivenedObjects) {
-      enlivenedObjects.forEach(function(obj, index) {
-        _this.insertAt(obj, index, true);
-      });
-
-      _this.renderOnAddition = renderOnAddition;
-      callback && callback();
-    });
+      callback && callback(enlivenedObjects);
+    }, null, reviver);
   },
 
   /**
@@ -156,9 +183,10 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
   /**
    * Clones canvas instance
    * @param {Object} [callback] Receives cloned instance as a first argument
+   * @param {Array} [properties] Array of properties to include in the cloned canvas and children
    */
-  clone: function (callback) {
-    var data = JSON.stringify(this);
+  clone: function (callback, properties) {
+    var data = JSON.stringify(this.toJSON(properties));
     this.cloneWithoutData(function(clone) {
       clone.loadFromJSON(data, function() {
         callback && callback(clone);
@@ -175,8 +203,8 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
   cloneWithoutData: function(callback) {
     var el = fabric.document.createElement('canvas');
 
-    el.width = this.getWidth();
-    el.height = this.getHeight();
+    el.width = this.width;
+    el.height = this.height;
 
     var clone = new fabric.Canvas(el);
     clone.clipTo = this.clipTo;
